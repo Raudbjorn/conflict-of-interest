@@ -126,7 +126,7 @@ For each file:
    appropriate. If balanced, prefer line-combination reasoning and lower
    confidence. If total conflict content is over 300 lines, halt or recommend
    `git-imerge`.
-2. If one side is empty, classify as modify/delete and inspect commit order
+2. If one side is empty, classify as `modify-delete` and inspect commit order
    with `git log --oneline --left-right --merge -- <file>`.
 3. Run stacked-PR detection:
 
@@ -146,7 +146,7 @@ For each file:
 5. Name the structural root cause.
 6. Infer ours/theirs intent in one sentence each.
 7. If either intent is unknown, HALT using the schema below.
-8. Classify: trivial, additive, competing, structural, delete-vs-edit, semantic.
+8. Classify: trivial, additive, competing, structural, modify-delete, semantic.
 9. Resolve, remove markers, stage, and produce a decision record.
 
 ### Step 4 — Validate
@@ -239,7 +239,7 @@ Produce Markdown plus fenced JSON:
 | Intent (theirs) | <sentence or UNKNOWN> |
 | Root cause | <structural cause> |
 | Confidence | high / medium / low / none -> HALT |
-| Conflict type | trivial / additive / competing / structural / delete-vs-edit / modify-delete |
+| Conflict type | trivial / additive / competing / structural / modify-delete / semantic |
 | Action | auto-resolved / user-directed / HALT |
 | Behaviour after resolution | <sentence asserting post-merge behavior> |
 ```

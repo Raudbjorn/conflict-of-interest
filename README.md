@@ -28,12 +28,18 @@ loss.
 |---|---|
 | Skill procedure | `SKILL.md`, `constitution.md` |
 | Strategy references | `references/*.md` |
-| Runtime helpers | `scripts/conflict-status.sh`, `scripts/categorize-conflicts.sh`, `scripts/validate-resolution.sh`, `scripts/detect-stacked-pr.sh`, `scripts/semantic-audit.sh` |
+| Runtime helpers | `scripts/conflict-status.sh`, `scripts/categorize-conflicts.sh`, `scripts/validate-resolution.sh`, `scripts/detect-stacked-pr.sh`, `scripts/semantic-audit.sh`, `scripts/suggest-pr-split.sh`, `scripts/open-stacked-prs.sh` |
 | Research handoff | `docs/research-synthesis.md`, `docs/SOURCES.md`, `docs/implementation-notes.md` |
 
 The helpers classify lockfiles, migrations, submodules, binary files,
 generated files, snapshots, notebooks, mergiraf-supported files, and remaining
 `other` files. High-risk categories route to explicit HALT paths.
+
+For an oversized PR or conflict, the skill also proposes a decomposition into
+smaller PRs along functional/structural boundaries (`suggest-pr-split.sh`) and can
+open the resulting stacked PRs on GitHub (`open-stacked-prs.sh`, dry-run by
+default, requires explicit `--execute --remote <name>` and `gh`). See
+`references/pr-decomposition.md`.
 
 ## Packaging
 

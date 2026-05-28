@@ -264,6 +264,8 @@ The LLMinus post-resolution compiler-error loop is also directly applicable: if 
 | **I-20** | Add explicit `conflict-status.sh` output of unmerged file count (4th tab-separated field) to inform Step 1 routing table | Completeness | 🟢 Low | S | Low | ✅ |
 | **I-21** | Add evidence-collection checklist before intent-inference in Step 3d (run `git log --left-right --merge -p` before concluding intent is uninferable) | Accuracy | 🟡 Medium | S | Medium | ✅ |
 | **I-22** | Add `notebook-outputs` category for `.ipynb` output-only conflicts | Coverage | 🟢 Low | M | Low | ✅ |
+| **I-23** | Create `scripts/suggest-pr-split.sh` to deterministically propose functional/structural split groups (module clustering, layer classification, rename isolation) for large changes/conflicts; add `references/pr-decomposition.md`; wire into the SKILL.md large-conflict escalation | Coverage | 🟡 Medium | M | Medium | ✅ |
+| **I-24** | Add `scripts/open-stacked-prs.sh` to materialize a split plan as stacked GitHub PRs (`gh`), dry-run by default with an `--execute` gate; broaden the skill trigger to a split mode | Coverage | 🟡 Medium | M | Medium | ✅ |
 
 **Effort key:** XS = < 1 hour · S = 1–4 hours · M = 4–8 hours · L = 1–2 days · XL = > 2 days
 
@@ -318,6 +320,10 @@ Per Merge-Bench per-language results[⁵]: C conflicts produce 31.1% model abste
 ### H-10 — rerere + git-imerge mutual exclusion
 
 git-imerge's README explicitly states it disables rerere because "rerere's cached resolutions can interfere with the pairwise consistency requirement" and caused incorrect merge conflict resolution in testing.[¹³] Any skill step that recommends both rerere and git-imerge in the same workflow is incorrect. The escalation path should warn: "disable `rerere.enabled` before using git-imerge."
+
+### H-11 — PR decomposition before conflict resolution
+
+Large PRs should be decomposed along refactor, dependency, functional, and ownership boundaries before they become a wall of local conflict markers. The 400-LOC review heuristic, AgenticFlict's ~25-line churn inflection, and the 87% line-combination/AST-set-union finding all point the same way: shrink the overlap surface first, then use structural merge tools such as `mergiraf` for the remaining local conflicts.
 
 ---
 

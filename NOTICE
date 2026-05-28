@@ -1,0 +1,22 @@
+git-conflict-resolver
+Copyright (c) 2026 Sveinbjorn Thordarson
+
+This project is licensed under the MIT License. See LICENSE for terms.
+
+Prior art:
+
+- Phil Haack's "resolve-conflicts" skill and article informed the broad
+  workflow shape: conflict context detection, file categorization, mergiraf
+  second pass, lockfile regeneration, migration escalation, and stacked-PR
+  duplicate detection.
+  https://haacked.com/archive/2026/03/25/resolve-merge-conflicts/
+  https://github.com/haacked/dotfiles/tree/main/ai/skills/resolve-conflicts
+
+The scripts in this repository are independent implementations written for
+this project. They are not copied from haacked/dotfiles.
+
+Runtime dependencies invoked as subprocesses, not redistributed:
+
+- git — GPLv2 — https://git-scm.com
+- mergiraf — GPLv3 — https://mergiraf.org
+

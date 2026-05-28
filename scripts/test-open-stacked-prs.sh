@@ -23,7 +23,7 @@ assert_contains() {
 new_repo() {
     local repo
     repo="$(mktemp -d "${TMPDIR:-/tmp}/open-stacked-prs.XXXXXX")"
-    git -C "$repo" init -q
+    git -C "$repo" init -q -b main
     git -C "$repo" config user.name "Test User"
     git -C "$repo" config user.email "test@example.com"
     git -C "$repo" config rerere.enabled false
@@ -116,6 +116,18 @@ test_protected_branch_refusal() {
     rm -rf "$repo"
 }
 
+# --- duplicate target branch names ------------------------------------------
+test_duplicate_branch_refusal() {
+    local repo rc err
+    repo="$(new_repo)"
+    rc=0
+    err="$(cd "$repo" && bash "$SCRIPT" --base main \
+        --group "split/db:db/m.sql" --group "split/db:src/auth/a.ts" 2>&1)" || rc=$?
+    assert_exit "duplicate branch exits 17" 17 "$rc"
+    assert_contains "duplicate branch message" "duplicate target branch name: split/db" "$err"
+    rm -rf "$repo"
+}
+
 # --- non-repo guard --------------------------------------------------------
 test_non_repo_guard() {
     local dir rc
@@ -143,6 +155,7 @@ test_dirty_tree_refusal
 test_missing_gh
 test_execute_requires_remote
 test_protected_branch_refusal
+test_duplicate_branch_refusal
 test_non_repo_guard
 test_arg_error
 

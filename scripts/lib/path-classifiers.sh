@@ -27,7 +27,7 @@ is_migration() {
     name="$(basename_of "$lower")"
 
     case "$lower" in
-        migrations/*|*/migrations/*|alembic/versions/*|*/alembic/versions/*|db/migrate/*|*/db/migrate/*|prisma/migrations/*|*/prisma/migrations/*|priv/repo/migrations/*|*/priv/repo/migrations/*|src/main/resources/db/changelog/*|*/src/main/resources/db/changelog/*|db/changelog/*|*/db/changelog/*|db/migration/*|*/db/migration/*|sqitch/deploy/*|*/sqitch/deploy/*|sqitch/revert/*|*/sqitch/revert/*|migrations/deploy/*|*/migrations/deploy/*|migrations/revert/*|*/migrations/revert/*|drizzle/*|*/drizzle/*)
+        migrations/*|*/migrations/*|alembic/versions/*|*/alembic/versions/*|db/migrate/*|*/db/migrate/*|prisma/migrations/*|*/prisma/migrations/*|priv/repo/migrations/*|*/priv/repo/migrations/*|src/main/resources/db/changelog/*|*/src/main/resources/db/changelog/*|db/changelog/*|*/db/changelog/*|db/migration/*|*/db/migration/*|sqitch/deploy/*|*/sqitch/deploy/*|sqitch/revert/*|*/sqitch/revert/*|drizzle/*|*/drizzle/*)
             return 0 ;;
         ormconfig.*|data-source.ts|data-source.js|knexfile.*)
             return 0 ;;
@@ -95,7 +95,7 @@ is_test_path() {
     lower="$(lower_path "$1")"
     case "$lower" in
         tests/*|*/tests/*|test/*|*/test/*|spec/*|*/spec/*|*/__tests__/*) return 0 ;;
-        *_test.*|*.test.*|*.spec.*|*_spec.rb|*_test.go) return 0 ;;
+        *_test.*|*.test.*|*.spec.*|*_spec.rb) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -120,7 +120,7 @@ is_ui_path() {
         *.css|*.scss|*.sass|*.less|*.svg|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.ico|*.html|*.vue|*.svelte) return 0 ;;
     esac
     case "$lower" in
-        */components/*|*/views/*|*/pages/*|*/ui/*)
+        components/*|*/components/*|views/*|*/views/*|pages/*|*/pages/*|ui/*|*/ui/*)
             case "$lower" in
                 *.ts|*.tsx|*.js|*.jsx|*.mjs) return 0 ;;
             esac ;;
@@ -141,4 +141,3 @@ is_doc_path() {
     esac
     return 1
 }
-

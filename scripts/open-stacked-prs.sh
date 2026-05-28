@@ -71,7 +71,14 @@ done
 
 if [ -z "$base" ]; then
     base="$(git symbolic-ref --quiet --short "refs/remotes/${remote}/HEAD" 2>/dev/null | sed "s#^${remote}/##" || true)"
-    [ -n "$base" ] || base="$(git branch --show-current 2>/dev/null || true)"
+    if [ -z "$base" ]; then
+        for candidate in main master trunk; do
+            if git show-ref --verify --quiet "refs/heads/$candidate"; then
+                base="$candidate"
+                break
+            fi
+        done
+    fi
     [ -n "$base" ] || usage_error "cannot determine --base; pass it explicitly"
 fi
 
@@ -100,6 +107,15 @@ branch_exists_locally() {
 branch_exists_remotely() {
     git ls-remote --exit-code --heads "$remote" "$1" >/dev/null 2>&1
 }
+
+declare -A seen_branch_names=()
+for branch in "${gnames[@]}"; do
+    if [ -n "${seen_branch_names[$branch]:-}" ]; then
+        echo "ERROR: duplicate target branch name: $branch" >&2
+        exit 17
+    fi
+    seen_branch_names["$branch"]=1
+done
 
 if $execute; then
     $remote_set || usage_error "--execute requires explicit --remote <name>"
@@ -162,4 +178,3 @@ if ! $execute; then
     echo "Nothing executed. Re-run with --execute only after user confirmation."
     echo "As each PR merges, retarget the next: ${GH_BIN} pr edit <n> --base ${base}"
 fi
-

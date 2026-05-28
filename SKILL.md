@@ -4,14 +4,17 @@ description: >
   Resolve git conflicts (rebase, merge, cherry-pick, revert) using mergiraf,
   deterministic category handling, explicit intent inference, validation, and
   semantic-conflict auditing. Use when git status shows unmerged paths or an
-  operation is paused with conflicts.
+  operation is paused with conflicts. Also decomposes an oversized PR or branch
+  into smaller stacked PRs along functional/structural boundaries.
 when_to_use: >
   Trigger phrases: "unmerged paths", "rebase paused", "merge conflict",
-  "resolve conflicts", "cherry-pick conflict", "revert conflict".
-  Do not use for abstract git education, blanket --ours/--theirs sweeps, or
-  force-push recovery.
-argument-hint: "[--abort|--continue]"
-allowed-tools: Bash(git *), Bash(mergiraf *), Bash(timeout *), Bash(npm *), Bash(pnpm *), Bash(yarn *), Bash(bun *), Bash(uv *), Bash(pdm *), Bash(cargo *), Bash(poetry *), Bash(bundle *), Bash(composer *), Bash(mix *), Bash(swift *), Bash(dart *), Bash(dotnet *), Bash(nix *), Bash(python *)
+  "resolve conflicts", "cherry-pick conflict", "revert conflict". Split mode (for
+  oversized changes only): "split this PR", "PR too big to review", "decompose
+  PR", "break up this branch".
+  Do not use for abstract git education, blanket --ours/--theirs sweeps,
+  force-push recovery, or general PR review.
+argument-hint: "[--abort|--continue|--split]"
+allowed-tools: Bash(git *), Bash(gh *), Bash(mergiraf *), Bash(timeout *), Bash(npm *), Bash(pnpm *), Bash(yarn *), Bash(bun *), Bash(uv *), Bash(pdm *), Bash(cargo *), Bash(poetry *), Bash(bundle *), Bash(composer *), Bash(mix *), Bash(swift *), Bash(dart *), Bash(dotnet *), Bash(nix *), Bash(python *)
 effort: high
 ---
 
@@ -30,6 +33,17 @@ Read `${CLAUDE_SKILL_DIR}/constitution.md`. These rules override this procedure:
 1. No conflict markers in tracked source files.
 2. No blanket resolution across human-authored files.
 3. Halt when intent cannot be inferred for `other` files.
+
+## Modes
+
+Two entry points:
+
+- **Resolve** (default): an operation is paused with conflicts. Follow the
+  Procedure below.
+- **Split** (`--split`, or a request to decompose an oversized PR/branch with no
+  active conflict): propose smaller PRs along functional/structural boundaries.
+  See "PR Decomposition" below. The Procedure's large-conflict gates also route
+  here when a conflict is too large to resolve in place.
 
 ## Procedure
 
@@ -57,7 +71,14 @@ Abort recommendation criteria:
 - same conflict reappears three or more times with rerere enabled
 
 These are configurable heuristics, not empirical laws. See
-`${CLAUDE_SKILL_DIR}/references/recurring-conflicts.md`.
+`${CLAUDE_SKILL_DIR}/references/recurring-conflicts.md`. When the unmerged count
+is 20 or more, run
+`${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --json` before
+categorizing. If high-confidence groups exist, recommend aborting and re-landing
+as smaller PRs (refactor-baseline first); see
+`${CLAUDE_SKILL_DIR}/references/pr-decomposition.md`. This is advisory —
+low-confidence (cross-cutting) groups are structural-only boundaries, not safe
+splits.
 
 ### Step 2 — Categorize
 
@@ -124,8 +145,11 @@ For each file:
 
 1. Measure balance. If one side is more than 3x longer, LLM analysis is more
    appropriate. If balanced, prefer line-combination reasoning and lower
-   confidence. If total conflict content is over 300 lines, halt or recommend
-   `git-imerge`.
+   confidence. If total conflict content is over 300 lines, halt and recommend
+   decomposition: run `${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts`
+   to propose split groups, and fall back to `git-imerge` (see
+   `${CLAUDE_SKILL_DIR}/references/recurring-conflicts.md`) when the change cannot
+   be split (all groups low-confidence/cross-cutting).
 2. If one side is empty, classify as `modify-delete` and inspect commit order
    with `git log --oneline --left-right --merge -- <file>`.
 3. Run stacked-PR detection:
@@ -214,6 +238,7 @@ Produce Markdown plus fenced JSON:
 **Lockfiles regenerated**: ...
 **Semantic audit**: ...
 **Constitutional overrides**: ...
+**Decomposition recommended**: <none, or which groups were proposed>
 ```
 
 ```json
@@ -240,7 +265,7 @@ Produce Markdown plus fenced JSON:
 | Root cause | <structural cause> |
 | Confidence | high / medium / low / none -> HALT |
 | Conflict type | trivial / additive / competing / structural / modify-delete / semantic |
-| Action | auto-resolved / user-directed / HALT |
+| Action | auto-resolved / user-directed / HALT / decompose-recommended |
 | Behaviour after resolution | <sentence asserting post-merge behavior> |
 ```
 
@@ -278,4 +303,40 @@ Produce Markdown plus fenced JSON:
 ```
 
 Abstention is better than a wrong merge.
+
+## PR Decomposition (split mode)
+
+Use when asked to decompose an oversized PR/branch, or when a large-conflict gate
+routes here. Full guidance: `${CLAUDE_SKILL_DIR}/references/pr-decomposition.md`.
+
+### Step S1 — Propose boundaries
+
+```bash
+# pre-conflict: analyze a PR/branch range
+${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --base <base-ref> --head <head-ref> --json
+# in an oversized conflict
+${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --json
+```
+
+Present the proposed groups in merge order (refactor-baseline first, then
+schema/migration, then source, then ui/test). State each group's confidence.
+Low-confidence (cross-cutting) groups are structural-only boundaries: flag them,
+do not present them as safe. If every group is low-confidence, recommend keeping
+the change whole or using `git-imerge` instead.
+
+### Step S2 — Dry-run the stack
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/open-stacked-prs.sh --base <trunk-branch> --head <head-ref> \
+  --group "<branch>:<path,path>" --group "<branch>:<path,path>"
+```
+
+`open-stacked-prs.sh` is dry-run by default and prints the `git`/`gh` plan.
+
+### Step S3 — Confirm, then execute
+
+Creating branches and PRs is outward-facing. Show the dry-run plan and obtain
+**explicit user confirmation** before re-running with `--execute`. Each split must
+compile/typecheck on its own; verify before opening the next PR. Retarget children
+to the trunk as parents merge (`gh pr edit <n> --base <trunk>`).
 

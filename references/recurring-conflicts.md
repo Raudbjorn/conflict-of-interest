@@ -29,3 +29,7 @@ Escalate to git-imerge when:
 - the same conflict repeats with different correct answers
 - a large branch mixes refactors and behavior changes
 
+When a large branch mixes refactors and behavior changes, prefer splitting the
+refactor into its own preliminary PR before merging. See
+`${CLAUDE_SKILL_DIR}/references/pr-decomposition.md`.
+

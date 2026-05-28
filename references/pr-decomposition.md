@@ -24,14 +24,21 @@ the other incrementally merges an unsplittable one.
 
 ## Boundary heuristics
 
-1. **Horizontal layer separation** — land lower layers first so each PR compiles:
-   schema/migration → business logic → UI/assets. (This mirrors the skill's
-   instinct to resolve a source spec before its generated output.)
-2. **Refactor isolation** — pure renames/moves/reformatting go into a dedicated
-   *preliminary* PR (high-similarity renames, `R90`+). This removes the
-   `structural` conflict class and gives the behavior PRs a clean baseline. It is
-   the highest-leverage split.
-3. **Iterative compiling milestones** — every split must leave the tree
+1. **Refactor isolation first, when clean** — pure renames/moves/reformatting go
+   into a dedicated *preliminary* PR (high-similarity renames, `R90`+). This
+   removes the `structural` conflict class and gives behavior PRs a clean
+   baseline. If the same files also carry behavior changes, downgrade confidence:
+   rebasing the behavior PR onto the refactor can reintroduce conflicts.
+2. **Dependency topology** — land lower layers first so each PR compiles:
+   contracts/schema/migration → shared infrastructure → implementation →
+   consumers/UI → cleanup. Keep generated output with its source spec and tests
+   with the implementation they validate.
+3. **Functional vertical slices** — when a feature has independent subfeatures,
+   split by user-visible capability rather than by arbitrary directory count.
+4. **Ownership and co-change** — package/module ownership, CODEOWNERS, and
+   historical co-change are supporting signals; they do not override dependency
+   direction.
+5. **Iterative compiling milestones** — every split must leave the tree
    buildable/typecheckable on its own. A split that breaks a milestone is worse
    than one large PR.
 
@@ -44,8 +51,9 @@ boundaries are structural, not semantic.
 | Signal | Deterministic | Defers to human |
 |---|---|---|
 | top-level module cluster | grouping key | true cross-module coupling |
-| layer classification (migration/lockfile/generated/test/ui/config/source) | path globs | mixed-layer single module |
+| layer classification (migration/lockfile/generated/test/ui/config/docs/source) | path globs | mixed-layer single module |
 | rename isolation (`R`-score) | `R>=threshold` → confident move | `R<threshold` → move + edit |
+| active conflict scopes | `--scope unmerged`, `incoming-range`, or `both` | whether the full source branch is semantically splittable |
 
 Confidence: `high` (single layer in a module), `medium` (two layers), `low`
 (three+ layers in one module, or a sub-threshold rename). **Low-confidence /
@@ -56,7 +64,7 @@ before splitting them, or keep the change whole. Abstaining beats a wrong split.
 # analyze a PR/branch before any local conflict
 ${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --base origin/main --head HEAD --json
 # analyze the current oversized conflict
-${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts
+${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --scope both
 ```
 
 ## Git surgery recipes
@@ -65,9 +73,10 @@ ${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts
 # inspect a candidate group
 git diff --stat <base>...<head> -- <paths>
 
-# carve a path subset onto a fresh branch (parallel, independent PRs)
-git checkout -b <branch> <base>
-git checkout <head> -- <paths>
+# carve a path subset onto a fresh branch
+git switch -c <branch> <base>
+git restore --source=<head> --staged --worktree -- <paths>
+git commit -m "<split title>"
 
 # lift specific commits instead of paths
 git cherry-pick <sha>...
@@ -98,8 +107,28 @@ ${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --base main --head HEAD --json \
   | ${CLAUDE_SKILL_DIR}/scripts/open-stacked-prs.sh --base main --from-json
 ```
 
+Execution requires an explicit remote:
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/open-stacked-prs.sh --base main --head HEAD \
+  --remote origin --execute --group "split/schema:db/migrate/001.sql"
+```
+
+The script synthesizes commits from path groups. It does not preserve the
+original commit topology unless the user already supplied commit-aligned groups.
+It refuses dirty trees, protected/default starting branches, missing `gh` auth,
+and pre-existing local/remote branch names.
+
 Retarget as parents merge: `gh pr edit <n> --base main`. Graphite and git-town
 automate this retargeting if you prefer an external tool.
+
+## Host notes
+
+| Host | Notes |
+|---|---|
+| GitHub | No native dependency enforcement; base-branch changes can make review comments outdated. Use a draft tracking PR or PR description checklist for stack state. |
+| GitLab | Premium/Ultimate support merge-request dependencies; `glab` can cover the CLI workflow. |
+| Bitbucket | Treat as mostly manual stack management; document parent/child order explicitly. |
 
 ## Governance thresholds (tunable heuristics, not laws)
 
@@ -123,3 +152,13 @@ For entangled changes where clean seams are unclear, `git-deps` (commit-level
 dependency graph) and Viezly (visual PR decomposition) help locate independent
 clusters. They are external and optional; `suggest-pr-split.sh` covers the
 high-confidence structural cases without them.
+
+## Anti-patterns
+
+- Formatting/refactors mixed with behavior changes.
+- Hand-resolved lockfiles; regenerate from manifests instead.
+- Generated output split away from the schema/spec that produces it.
+- Tests split away from the implementation they validate.
+- Dropping old APIs or columns before all consumers are migrated.
+- Squash-merging a parent stack PR without rebasing/retargeting children.
+- Splitting so small that no reviewer can understand the behavior in isolation.

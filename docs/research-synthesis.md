@@ -321,6 +321,10 @@ Per Merge-Bench per-language results[⁵]: C conflicts produce 31.1% model abste
 
 git-imerge's README explicitly states it disables rerere because "rerere's cached resolutions can interfere with the pairwise consistency requirement" and caused incorrect merge conflict resolution in testing.[¹³] Any skill step that recommends both rerere and git-imerge in the same workflow is incorrect. The escalation path should warn: "disable `rerere.enabled` before using git-imerge."
 
+### H-11 — PR decomposition before conflict resolution
+
+Large PRs should be decomposed along refactor, dependency, functional, and ownership boundaries before they become a wall of local conflict markers. The 400-LOC review heuristic, AgenticFlict's ~25-line churn inflection, and the 87% line-combination/AST-set-union finding all point the same way: shrink the overlap surface first, then use structural merge tools such as `mergiraf` for the remaining local conflicts.
+
 ---
 
 ## 7. Proposed Skill / Prompt Changes

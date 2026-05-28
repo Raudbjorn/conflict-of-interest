@@ -38,7 +38,8 @@ generated files, snapshots, notebooks, mergiraf-supported files, and remaining
 For an oversized PR or conflict, the skill also proposes a decomposition into
 smaller PRs along functional/structural boundaries (`suggest-pr-split.sh`) and can
 open the resulting stacked PRs on GitHub (`open-stacked-prs.sh`, dry-run by
-default, requires `gh`). See `references/pr-decomposition.md`.
+default, requires explicit `--execute --remote <name>` and `gh`). See
+`references/pr-decomposition.md`.
 
 ## Packaging
 

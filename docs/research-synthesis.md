@@ -264,6 +264,8 @@ The LLMinus post-resolution compiler-error loop is also directly applicable: if 
 | **I-20** | Add explicit `conflict-status.sh` output of unmerged file count (4th tab-separated field) to inform Step 1 routing table | Completeness | 🟢 Low | S | Low | ✅ |
 | **I-21** | Add evidence-collection checklist before intent-inference in Step 3d (run `git log --left-right --merge -p` before concluding intent is uninferable) | Accuracy | 🟡 Medium | S | Medium | ✅ |
 | **I-22** | Add `notebook-outputs` category for `.ipynb` output-only conflicts | Coverage | 🟢 Low | M | Low | ✅ |
+| **I-23** | Create `scripts/suggest-pr-split.sh` to deterministically propose functional/structural split groups (module clustering, layer classification, rename isolation) for large changes/conflicts; add `references/pr-decomposition.md`; wire into the SKILL.md large-conflict escalation | Coverage | 🟡 Medium | M | Medium | ✅ |
+| **I-24** | Add `scripts/open-stacked-prs.sh` to materialize a split plan as stacked GitHub PRs (`gh`), dry-run by default with an `--execute` gate; broaden the skill trigger to a split mode | Coverage | 🟡 Medium | M | Medium | ✅ |
 
 **Effort key:** XS = < 1 hour · S = 1–4 hours · M = 4–8 hours · L = 1–2 days · XL = > 2 days
 

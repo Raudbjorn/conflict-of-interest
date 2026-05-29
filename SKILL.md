@@ -167,11 +167,29 @@ For each file:
    git diff "$(git merge-base HEAD MERGE_HEAD)" MERGE_HEAD -- <file>
    ```
 
-5. Name the structural root cause.
-6. Infer ours/theirs intent in one sentence each.
-7. If either intent is unknown, HALT using the schema below.
-8. Classify: trivial, additive, competing, structural, modify-delete, semantic.
-9. Resolve, remove markers, stage, and produce a decision record.
+5. For human-authored source/config conflicts, retrieve similar historical
+   resolutions when the conflict is semantic, structural, competing, or intent is
+   not obvious. Do not run this for generated files, lockfiles, snapshots,
+   migrations, notebooks, binaries, submodules, or vendored output.
+
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/historical-resolution-search.sh \
+     --file <file> --top 3 --json
+   ```
+
+   Treat matches as advisory evidence only:
+   - similar past resolutions may clarify project intent or show that the
+     repository usually recombines parent lines;
+   - `no_signal` results are normal in squash/rebase-only or shallow histories;
+   - never auto-apply a historical result.
+
+   For C/C++ and other high-risk languages, require stronger intent evidence and
+   validation even when similar historical examples exist.
+6. Name the structural root cause.
+7. Infer ours/theirs intent in one sentence each.
+8. If either intent is unknown, HALT using the schema below.
+9. Classify: trivial, additive, competing, structural, modify-delete, semantic.
+10. Resolve, remove markers, stage, and produce a decision record.
 
 ### Step 4 — Validate
 
@@ -260,6 +278,7 @@ Produce Markdown plus fenced JSON:
 |---|---|
 | Category | lockfile / migration / submodule / binary / generated / snapshot / notebook / mergiraf / other |
 | Evidence sources checked | commit-msg / ancestor-diff / related-files / PR-refs |
+| Historical resolutions checked | none / no-signal:<reason> / <N examples: sha:path> |
 | Intent (ours) | <sentence or UNKNOWN> |
 | Intent (theirs) | <sentence or UNKNOWN> |
 | Root cause | <structural cause> |

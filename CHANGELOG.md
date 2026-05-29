@@ -16,3 +16,7 @@
   with explicit `--execute --remote <name>` gates).
 - Broadened the skill trigger to a split mode for oversized PRs/branches and
   allowed only `gh auth status` / `gh pr *` for the optional PR automation.
+- Added local historical-resolution retrieval:
+  `scripts/historical-resolution-search.sh` mines real two-parent conflict
+  resolutions from Git history, reports line-recombination evidence, and is wired
+  into `SKILL.md` as advisory-only intent evidence.

@@ -7,51 +7,8 @@ set -euo pipefail
 # materializing a proposal and references/pr-decomposition.md for the theory.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Reuse the categorizer's path predicates (is_lockfile/is_migration/is_generated).
-# categorize-conflicts.sh guards its main() with a BASH_SOURCE check, so sourcing
-# only imports functions.
-# shellcheck source=categorize-conflicts.sh
-source "$SCRIPT_DIR/categorize-conflicts.sh"
-
-# --- layer predicates (pure, path-only) -----------------------------------
-
-is_test_path() {
-    local lower
-    lower="$(lower_path "$1")"
-    case "$lower" in
-        tests/*|*/tests/*|test/*|*/test/*|spec/*|*/spec/*|*/__tests__/*) return 0 ;;
-        *_test.*|*.test.*|*.spec.*|*_spec.rb|*_test.go) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-is_config_path() {
-    local lower name
-    lower="$(lower_path "$1")"
-    name="${1##*/}"
-    case "$lower" in
-        *.json|*.yml|*.yaml|*.toml|*.ini|*.cfg|*.conf|*.properties|*.env|*.config.js|*.config.ts|*.config.mjs) return 0 ;;
-    esac
-    case "$name" in
-        .env*|Dockerfile|.dockerignore|.gitignore|.editorconfig) return 0 ;;
-    esac
-    return 1
-}
-
-is_ui_asset() {
-    local lower
-    lower="$(lower_path "$1")"
-    case "$lower" in
-        *.css|*.scss|*.sass|*.less|*.svg|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.ico|*.html|*.vue|*.svelte) return 0 ;;
-    esac
-    case "$lower" in
-        */components/*|*/views/*|*/pages/*|*/ui/*)
-            case "$lower" in
-                *.ts|*.tsx|*.js|*.jsx|*.mjs) return 0 ;;
-            esac ;;
-    esac
-    return 1
-}
+# shellcheck source=lib/path-classifiers.sh
+source "$SCRIPT_DIR/lib/path-classifiers.sh"
 
 classify_layer() {
     local path="$1"
@@ -59,28 +16,27 @@ classify_layer() {
     elif is_migration "$path"; then echo migration
     elif is_generated "$path"; then echo generated
     elif is_test_path "$path"; then echo test
-    elif is_ui_asset "$path"; then echo ui
+    elif is_ui_path "$path"; then echo ui
     elif is_config_path "$path"; then echo config
+    elif is_doc_path "$path"; then echo docs
     else echo source
     fi
 }
 
-# Merge-order tier: refactor first, then schema/locks, then code, then ui/tests.
 layer_order() {
     case "$1" in
         refactor) echo 0 ;;
-        lockfile) echo 1 ;;
-        migration) echo 1 ;;
-        generated) echo 2 ;;
-        source) echo 3 ;;
-        config) echo 4 ;;
-        ui) echo 5 ;;
-        test) echo 6 ;;
-        *) echo 9 ;;
+        lockfile|migration) echo 10 ;;
+        generated) echo 20 ;;
+        source) echo 30 ;;
+        config) echo 40 ;;
+        ui) echo 50 ;;
+        test) echo 60 ;;
+        docs) echo 70 ;;
+        *) echo 90 ;;
     esac
 }
 
-# Cluster key: top-level directory, or two segments under a monorepo container.
 top_module() {
     local path="$1" first rest second
     case "$path" in
@@ -103,6 +59,7 @@ json_escape() {
     local s="$1"
     s="${s//\\/\\\\}"
     s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
     printf '%s' "$s"
 }
 
@@ -110,33 +67,46 @@ layer_count() {
     printf '%s' "$1" | tr ' ' '\n' | sed '/^$/d' | sort -u | grep -c . || true
 }
 
+usage_error() {
+    echo "ERROR: $1" >&2
+    exit 10
+}
+
+require_value() {
+    [ "$#" -ge 2 ] || usage_error "$1 needs a value"
+}
+
 main() {
     command -v git >/dev/null || { echo "ERROR: git not found in PATH" >&2; exit 12; }
     git rev-parse --git-dir >/dev/null 2>&1 || { echo "ERROR: not in a git repository" >&2; exit 11; }
 
-    local conflicts_mode=false base="" head="" json=false
-    local rename_threshold=90 large_loc=400
+    local conflicts_mode=false base="" head="" json=false no_color=false
+    local rename_threshold=90 large_loc=400 scope="unmerged"
     local exclude=()
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --conflicts) conflicts_mode=true; shift ;;
-            --base) [ "$#" -ge 2 ] || { echo "ERROR: --base needs a ref" >&2; exit 10; }; base="$2"; shift 2 ;;
-            --head) [ "$#" -ge 2 ] || { echo "ERROR: --head needs a ref" >&2; exit 10; }; head="$2"; shift 2 ;;
-            --rename-threshold) [ "$#" -ge 2 ] || { echo "ERROR: --rename-threshold needs a number" >&2; exit 10; }; rename_threshold="$2"; shift 2 ;;
-            --large-loc) [ "$#" -ge 2 ] || { echo "ERROR: --large-loc needs a number" >&2; exit 10; }; large_loc="$2"; shift 2 ;;
-            --exclude-paths) [ "$#" -ge 2 ] || { echo "ERROR: --exclude-paths needs a pattern" >&2; exit 10; }; exclude+=(":!$2"); shift 2 ;;
+            --scope) require_value "$@"; scope="$2"; shift 2 ;;
+            --base) require_value "$@"; base="$2"; shift 2 ;;
+            --head) require_value "$@"; head="$2"; shift 2 ;;
+            --rename-threshold) require_value "$@"; rename_threshold="$2"; shift 2 ;;
+            --large-loc|--max-group-loc) require_value "$@"; large_loc="$2"; shift 2 ;;
+            --exclude-paths) require_value "$@"; exclude+=(":!$2"); shift 2 ;;
             --json) json=true; shift ;;
+            --no-color) no_color=true; shift ;;
             --) shift; break ;;
-            -*) echo "ERROR: unknown flag: $1" >&2; exit 10 ;;
-            *) echo "ERROR: unexpected arg: $1" >&2; exit 10 ;;
+            -*) usage_error "unknown flag: $1" ;;
+            *) usage_error "unexpected arg: $1" ;;
         esac
     done
 
-    case "$rename_threshold" in ''|*[!0-9]*) echo "ERROR: --rename-threshold must be an integer" >&2; exit 10 ;; esac
-    case "$large_loc" in ''|*[!0-9]*) echo "ERROR: --large-loc must be an integer" >&2; exit 10 ;; esac
+    case "$rename_threshold" in ''|*[!0-9]*) usage_error "--rename-threshold must be an integer" ;; esac
+    case "$large_loc" in ''|*[!0-9]*) usage_error "--large-loc must be an integer" ;; esac
+    case "$scope" in unmerged|incoming-range|both) ;; *) usage_error "--scope must be unmerged, incoming-range, or both" ;; esac
+    $no_color || true
 
-    local git_dir mode other_ref="" range="" head_report=""
+    local git_dir mode other_ref="" range="" head_report="" scope_report=""
     git_dir="$(git rev-parse --git-dir)"
 
     if $conflicts_mode; then
@@ -156,10 +126,14 @@ main() {
         head="${head:-HEAD}"
         if [ -z "$base" ]; then
             base="$(git merge-base HEAD "$head" 2>/dev/null || true)"
-            [ -n "$base" ] || { echo "ERROR: cannot determine merge base; pass --base" >&2; exit 10; }
+            [ -n "$base" ] || usage_error "cannot determine merge base; pass --base"
+        fi
+        if ! git merge-base --is-ancestor "$base" "$head" 2>/dev/null; then
+            echo "WARN: base '$base' is not an ancestor of head '$head'; using symmetric diff only" >&2
         fi
         range="$base...$head"
         head_report="$head"
+        scope_report="null"
     else
         if [ -f "$git_dir/MERGE_HEAD" ]; then other_ref=MERGE_HEAD
         elif [ -f "$git_dir/CHERRY_PICK_HEAD" ]; then other_ref=CHERRY_PICK_HEAD
@@ -167,13 +141,18 @@ main() {
         elif [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then other_ref=REBASE_HEAD
         fi
         base="$(git merge-base HEAD "${other_ref:-HEAD}" 2>/dev/null || true)"
-        range=""
         head_report="${other_ref:-WORKING}"
+        scope_report="$scope"
+        if [ "$scope" != "unmerged" ]; then
+            [ -n "$other_ref" ] || usage_error "--scope $scope requires an active operation ref"
+            [ -n "$base" ] || usage_error "cannot determine merge base for active operation"
+            range="$base...$other_ref"
+        fi
     fi
 
     file_loc() {
         local p="$1" ns added deleted
-        ns="$(git diff --numstat $range -- "$p" 2>/dev/null | head -n1 || true)"
+        ns="$(git -c core.quotePath=false diff --numstat ${range:+"$range"} -- "$p" 2>/dev/null | head -n1 || true)"
         added="$(printf '%s' "$ns" | cut -f1)"
         deleted="$(printf '%s' "$ns" | cut -f2)"
         [ "$added" = "-" ] && added=0
@@ -183,49 +162,81 @@ main() {
         echo $((added + deleted))
     }
 
-    # --- collect file records: path<TAB>status<TAB>from -----------------
+    collect_range_records() {
+        local status path from
+        git -c core.quotePath=false diff -M1% --name-status -z "$range" -- "${exclude[@]}" 2>/dev/null |
+            while IFS= read -r -d '' status; do
+                [ -n "$status" ] || continue
+                case "$status" in
+                    R*|C*)
+                        IFS= read -r -d '' from || true
+                        IFS= read -r -d '' path || true
+                        printf '%s\t%s\t%s\n' "$path" "$status" "$from"
+                        ;;
+                    *)
+                        IFS= read -r -d '' path || true
+                        printf '%s\t%s\t\n' "$path" "$status"
+                        ;;
+                esac
+            done
+    }
+
+    collect_unmerged_records() {
+        local path
+        git -c core.quotePath=false diff --name-only --diff-filter=U -- "${exclude[@]}" 2>/dev/null |
+            while IFS= read -r path; do
+                [ -n "$path" ] || continue
+                printf '%s\tU\t\n' "$path"
+            done
+    }
+
     local records=()
     if [ "$mode" = range ]; then
-        local c1 c2 c3
-        while IFS=$'\t' read -r c1 c2 c3; do
-            [ -n "${c1:-}" ] || continue
-            case "$c1" in
-                R*|C*) records+=("${c3}"$'\t'"${c1}"$'\t'"${c2}") ;;
-                *)     records+=("${c2}"$'\t'"${c1}"$'\t') ;;
-            esac
-        done < <(git diff -M --name-status "$range" -- ${exclude[@]+"${exclude[@]}"} 2>/dev/null || true)
+        mapfile -t records < <(collect_range_records)
     else
-        local p
-        while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            records+=("${p}"$'\t'"U"$'\t')
-        done < <(git diff --name-only --diff-filter=U -- ${exclude[@]+"${exclude[@]}"} 2>/dev/null || true)
+        case "$scope" in
+            unmerged)
+                mapfile -t records < <(collect_unmerged_records)
+                ;;
+            incoming-range)
+                mapfile -t records < <(collect_range_records)
+                ;;
+            both)
+                mapfile -t records < <({ collect_range_records; collect_unmerged_records; } | awk -F '\t' '!seen[$1]++')
+                ;;
+        esac
     fi
 
     if [ "${#records[@]}" -eq 0 ]; then
-        if $json; then echo '{"groups":[]}'; else echo "No changes to split."; fi
+        if $json; then
+            printf '{"mode":"%s","scope":%s,"base":"%s","head":"%s","thresholds":{"rename":%d,"large_loc":%d},"groups":[],"warnings":[]}\n' \
+                "$mode" "$([ "$scope_report" = null ] && echo null || printf '"%s"' "$scope_report")" \
+                "$(json_escape "$base")" "$(json_escape "$head_report")" "$rename_threshold" "$large_loc"
+        else
+            echo "No changes to split."
+        fi
         exit 1
     fi
 
-    # --- group by module (renames >= threshold go to refactor-baseline) -
-    declare -A g_files=() g_loc=() g_layers=() g_minorder=() g_minlayer=() g_weak=()
-    local rec path status from gid layer weak score d ord loc
+    declare -A g_files=() g_loc=() g_layers=() g_minorder=() g_minlayer=() g_weak=() g_warn=() seen_refactor_modules=() seen_behavior_modules=()
+    local rec path status from gid layer weak score d ord loc module
     for rec in "${records[@]}"; do
         IFS=$'\t' read -r path status from <<< "$rec"
+        [ -n "${path:-}" ] || continue
         weak=0
+        module="$(top_module "$path")"
         if [[ "$status" == R* ]]; then
             d="${status#R}"; [ -n "$d" ] || d=100
             score=$((10#$d))
             if [ "$score" -ge "$rename_threshold" ]; then
-                gid="refactor-baseline"; layer="refactor"
+                gid="refactor-baseline"; layer="refactor"; seen_refactor_modules["$module"]=1
             else
-                gid="$(top_module "$path")"; layer="$(classify_layer "$path")"; weak=1
+                gid="$module"; layer="$(classify_layer "$path")"; weak=1
+                g_warn["$gid"]+="sub-threshold rename ${status} for ${path}; "
             fi
         else
-            gid="$(top_module "$path")"; layer="$(classify_layer "$path")"
+            gid="$module"; layer="$(classify_layer "$path")"; seen_behavior_modules["$module"]=1
         fi
-        # 'from' is optional, so keep it last: read collapses empty middle
-        # fields when IFS is a whitespace char (tab).
         g_files["$gid"]+="${path}"$'\t'"${status}"$'\t'"${layer}"$'\t'"${from}"$'\n'
         loc="$(file_loc "$path")"
         g_loc["$gid"]=$(( ${g_loc["$gid"]:-0} + loc ))
@@ -237,10 +248,17 @@ main() {
         fi
     done
 
+    for module in "${!seen_refactor_modules[@]}"; do
+        if [ -n "${seen_behavior_modules[$module]:-}" ]; then
+            g_weak["refactor-baseline"]=1
+            g_warn["refactor-baseline"]+="refactor touches module '${module}' that also has behavior changes; "
+        fi
+    done
+
     group_confidence() {
         local gid="$1" lc
-        [ "$gid" = "refactor-baseline" ] && { echo high; return; }
         [ -n "${g_weak[$gid]:-}" ] && { echo low; return; }
+        [ "$gid" = "refactor-baseline" ] && { echo high; return; }
         lc="$(layer_count "${g_layers[$gid]}")"
         if [ "$lc" -ge 3 ]; then echo low
         elif [ "$lc" -eq 2 ]; then echo medium
@@ -248,36 +266,49 @@ main() {
         fi
     }
 
-    # --- sort group ids by (order, id) ----------------------------------
-    local sorted gid_line
+    local sorted
     sorted="$(for gid in "${!g_files[@]}"; do printf '%s\t%s\n' "${g_minorder[$gid]}" "$gid"; done | sort -t$'\t' -k1,1n -k2,2)"
 
-    # --- warnings -------------------------------------------------------
-    local warnings=() conf over
+    local warnings=() conf over gid
     while IFS=$'\t' read -r _ gid; do
         [ -n "${gid:-}" ] || continue
         conf="$(group_confidence "$gid")"
         if [ "$conf" = low ]; then
-            warnings+=("group '${gid}' is cross-cutting (multi-layer or weak rename): boundary is structural only; verify dependencies before splitting")
+            warnings+=("group '${gid}' is low confidence: verify dependencies before splitting")
+        fi
+        if [ -z "${g_weak[$gid]:-}" ] && [ "$(layer_count "${g_layers[$gid]}")" -ge 3 ]; then
+            warnings+=("group '${gid}' is cross-cutting across 3+ layers; prefer a manual dependency check")
         fi
         if [ "${g_loc[$gid]:-0}" -gt "$large_loc" ]; then
             warnings+=("group '${gid}' exceeds ${large_loc} LOC: overlap risk elevated")
         fi
     done <<< "$sorted"
+    if [ "$scope" = both ] && [ "$mode" = conflicts ]; then
+        warnings+=("scope 'both' combines incoming range analysis with currently unmerged files")
+    fi
 
-    # --- emit -----------------------------------------------------------
     if $json; then
-        printf '{"mode":"%s","base":"%s","head":"%s","thresholds":{"rename":%d,"large_loc":%d},"groups":[' \
-            "$mode" "$(json_escape "$base")" "$(json_escape "$head_report")" "$rename_threshold" "$large_loc"
-        local gfirst=1 fline fpath fstatus ffrom flayer ffirst
+        local scope_json
+        if [ "$scope_report" = null ]; then scope_json=null; else scope_json="\"$(json_escape "$scope_report")\""; fi
+        printf '{"mode":"%s","scope":%s,"base":"%s","head":"%s","thresholds":{"rename":%d,"large_loc":%d},"groups":[' \
+            "$mode" "$scope_json" "$(json_escape "$base")" "$(json_escape "$head_report")" "$rename_threshold" "$large_loc"
+        local gfirst=1 fpath fstatus ffrom flayer ffirst w
         while IFS=$'\t' read -r _ gid; do
             [ -n "${gid:-}" ] || continue
             [ "$gfirst" -eq 1 ] || printf ','
             gfirst=0
             conf="$(group_confidence "$gid")"
             over=false; [ "${g_loc[$gid]:-0}" -gt "$large_loc" ] && over=true
-            printf '{"id":"%s","order":%d,"layer":"%s","confidence":"%s","loc":%d,"over_large_loc":%s,"files":[' \
-                "$(json_escape "$gid")" "${g_minorder[$gid]}" "${g_minlayer[$gid]}" "$conf" "${g_loc[$gid]:-0}" "$over"
+            printf '{"id":"%s","order":%d,"module":"%s","layer":"%s","confidence":"%s","loc":%d,"over_large_loc":%s,"warnings":[' \
+                "$(json_escape "$gid")" "${g_minorder[$gid]}" "$(json_escape "$gid")" "${g_minlayer[$gid]}" "$conf" "${g_loc[$gid]:-0}" "$over"
+            ffirst=1
+            if [ -n "${g_warn[$gid]:-}" ]; then
+                w="${g_warn[$gid]}"
+                w="${w%; }"
+                printf '"%s"' "$(json_escape "$w")"
+                ffirst=0
+            fi
+            printf '],"files":['
             ffirst=1
             while IFS=$'\t' read -r fpath fstatus flayer ffrom; do
                 [ -n "${fpath:-}" ] || continue
@@ -299,7 +330,7 @@ main() {
         done
         printf ']}\n'
     else
-        echo "=== suggest-pr-split (${mode}${range:+ $range}) ==="
+        echo "=== suggest-pr-split (${mode}${range:+ $range}${scope_report:+ scope=$scope_report}) ==="
         local ngroups; ngroups="$(printf '%s\n' "$sorted" | sed '/^$/d' | wc -l | tr -d ' ')"
         printf 'Proposed groups: %s   Rename threshold: %s%%   Large-LOC: %s\n\n' "$ngroups" "$rename_threshold" "$large_loc"
         printf '%-5s %-22s %-10s %-6s %-7s %-7s %s\n' Order Group Layer Files LOC Conf Flag
@@ -309,7 +340,7 @@ main() {
             conf="$(group_confidence "$gid")"
             nfiles="$(printf '%s' "${g_files[$gid]}" | sed '/^$/d' | wc -l | tr -d ' ')"
             flag=""
-            [ "$conf" = low ] && flag="CROSS-CUTTING"
+            [ "$conf" = low ] && flag="LOW-CONFIDENCE"
             [ "${g_loc[$gid]:-0}" -gt "$large_loc" ] && flag="${flag:+$flag }>LOC"
             printf '%-5s %-22s %-10s %-6s %-7s %-7s %s\n' \
                 "${g_minorder[$gid]}" "$gid" "${g_minlayer[$gid]}" "$nfiles" "${g_loc[$gid]:-0}" "$conf" "$flag"

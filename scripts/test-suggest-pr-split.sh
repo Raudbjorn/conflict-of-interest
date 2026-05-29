@@ -223,13 +223,65 @@ test_json_shape() {
     git -C "$repo" add -A; git -C "$repo" commit -qm head
     out="$(cd "$repo" && bash "$SCRIPT" --base "$b" --head HEAD --json)"
     assert_contains "json has mode" '"mode":"range"' "$out"
+    assert_contains "json has scope null" '"scope":null' "$out"
     assert_contains "json has groups array" '"groups":[' "$out"
     if command -v python3 >/dev/null 2>&1; then
-        if printf '%s' "$out" | python3 -m json.tool >/dev/null 2>&1; then pass; else fail "json is not valid"; fi
+        if printf '%s' "$out" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+required = {"mode", "scope", "base", "head", "thresholds", "groups", "warnings"}
+assert required <= set(d), d.keys()
+assert isinstance(d["thresholds"]["rename"], int)
+assert isinstance(d["thresholds"]["large_loc"], int)
+assert isinstance(d["groups"], list) and d["groups"]
+g = d["groups"][0]
+for key in ("id", "order", "module", "layer", "confidence", "loc", "over_large_loc", "warnings", "files"):
+    assert key in g, key
+assert isinstance(g["files"], list) and g["files"]
+assert {"path", "status", "layer"} <= set(g["files"][0]), g["files"][0]
+' >/dev/null 2>&1; then pass; else fail "json contract invalid"; fi
     else
         echo "SKIP: python3 absent, skipping JSON validity check"
         pass
     fi
+    rm -rf "$repo"
+}
+
+# --- integration: active conflict scopes ------------------------------------
+test_conflict_scopes() {
+    local repo out_unmerged out_incoming out_both rc
+    repo="$(new_repo)"
+    git -C "$repo" branch -M main
+    mkdir -p "$repo/src/auth"
+    printf 'base\n' > "$repo/conflict.txt"
+    printf 'seed\n' > "$repo/src/auth/existing.ts"
+    git -C "$repo" add -A; git -C "$repo" commit -qm base
+    git -C "$repo" switch -c feature -q
+    printf 'feature\n' > "$repo/conflict.txt"
+    printf 'new\n' > "$repo/src/auth/new.ts"
+    git -C "$repo" add -A; git -C "$repo" commit -qm feature
+    git -C "$repo" switch main -q
+    printf 'main\n' > "$repo/conflict.txt"
+    git -C "$repo" add -A; git -C "$repo" commit -qm main
+    (cd "$repo" && git merge feature >/dev/null 2>&1) || true
+
+    rc=0
+    out_unmerged="$(cd "$repo" && bash "$SCRIPT" --conflicts --scope unmerged --json)" || rc=$?
+    assert_exit "unmerged scope exits 0" 0 "$rc"
+    assert_contains "unmerged scope recorded" '"scope":"unmerged"' "$out_unmerged"
+    assert_contains "unmerged includes conflict path" '"path":"conflict.txt"' "$out_unmerged"
+    assert_not_contains "unmerged excludes non-conflicted incoming file" 'src/auth/new.ts' "$out_unmerged"
+
+    rc=0
+    out_incoming="$(cd "$repo" && bash "$SCRIPT" --conflicts --scope incoming-range --json)" || rc=$?
+    assert_exit "incoming-range scope exits 0" 0 "$rc"
+    assert_contains "incoming scope recorded" '"scope":"incoming-range"' "$out_incoming"
+    assert_contains "incoming includes branch-only path" 'src/auth/new.ts' "$out_incoming"
+
+    rc=0
+    out_both="$(cd "$repo" && bash "$SCRIPT" --conflicts --scope both --json)" || rc=$?
+    assert_exit "both scope exits 0" 0 "$rc"
+    assert_contains "both scope warning" "combines incoming range analysis" "$out_both"
     rm -rf "$repo"
 }
 
@@ -245,6 +297,7 @@ test_empty_input
 test_non_repo_guard
 test_arg_errors
 test_json_shape
+test_conflict_scopes
 
 echo ""
 echo "Results: $passes passed, $failures failed"

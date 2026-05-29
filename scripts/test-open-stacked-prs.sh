@@ -23,7 +23,7 @@ assert_contains() {
 new_repo() {
     local repo
     repo="$(mktemp -d "${TMPDIR:-/tmp}/open-stacked-prs.XXXXXX")"
-    git -C "$repo" init -q
+    git -C "$repo" init -q -b main
     git -C "$repo" config user.name "Test User"
     git -C "$repo" config user.email "test@example.com"
     git -C "$repo" config rerere.enabled false
@@ -32,6 +32,7 @@ new_repo() {
     printf 'y\n' > "$repo/db/m.sql"
     git -C "$repo" add -A
     git -C "$repo" commit -qm base
+    git -C "$repo" remote add origin "$repo"
     echo "$repo"
 }
 
@@ -43,9 +44,9 @@ test_dry_run_plan() {
     out="$(cd "$repo" && bash "$SCRIPT" --base main --head HEAD \
         --group "split/db:db/m.sql" --group "split/auth:src/auth/a.ts")" || rc=$?
     assert_exit "dry-run exits 0" 0 "$rc"
-    assert_contains "first branch off base" "git checkout -b split/db main" "$out"
+    assert_contains "first branch off base" "git switch -c split/db main" "$out"
     assert_contains "first PR targets base" "gh pr create --base main --head split/db" "$out"
-    assert_contains "second branch off first" "git checkout -b split/auth split/db" "$out"
+    assert_contains "second branch off first" "git switch -c split/auth split/db" "$out"
     assert_contains "second PR targets first branch" "gh pr create --base split/db --head split/auth" "$out"
     assert_contains "dry-run executes nothing" "Nothing executed." "$out"
     rm -rf "$repo"
@@ -77,7 +78,7 @@ test_dirty_tree_refusal() {
     repo="$(new_repo)"
     printf 'dirty\n' >> "$repo/db/m.sql"
     rc=0
-    (cd "$repo" && bash "$SCRIPT" --base main --group "split/db:db/m.sql" --execute) >/dev/null 2>&1 || rc=$?
+    (cd "$repo" && bash "$SCRIPT" --base main --remote origin --group "split/db:db/m.sql" --execute) >/dev/null 2>&1 || rc=$?
     assert_exit "dirty tree refused with exit 13" 13 "$rc"
     rm -rf "$repo"
 }
@@ -87,9 +88,43 @@ test_missing_gh() {
     local repo rc
     repo="$(new_repo)"
     rc=0
+    git -C "$repo" switch -c work -q
     (cd "$repo" && GH_BIN="gh-not-a-real-binary-xyz" bash "$SCRIPT" \
-        --base main --group "split/db:db/m.sql" --execute) >/dev/null 2>&1 || rc=$?
+        --base main --remote origin --group "split/db:db/m.sql" --execute) >/dev/null 2>&1 || rc=$?
     assert_exit "missing gh exits 14 before any branch op" 14 "$rc"
+    rm -rf "$repo"
+}
+
+# --- execute requires explicit remote --------------------------------------
+test_execute_requires_remote() {
+    local repo rc
+    repo="$(new_repo)"
+    rc=0
+    (cd "$repo" && bash "$SCRIPT" --base main --group "split/db:db/m.sql" --execute) >/dev/null 2>&1 || rc=$?
+    assert_exit "execute without explicit remote exits 10" 10 "$rc"
+    rm -rf "$repo"
+}
+
+# --- protected branch guard -------------------------------------------------
+test_protected_branch_refusal() {
+    local repo rc
+    repo="$(new_repo)"
+    rc=0
+    (cd "$repo" && GH_BIN="gh-not-a-real-binary-xyz" bash "$SCRIPT" \
+        --base main --remote origin --group "split/db:db/m.sql" --execute) >/dev/null 2>&1 || rc=$?
+    assert_exit "protected branch refused before gh" 16 "$rc"
+    rm -rf "$repo"
+}
+
+# --- duplicate target branch names ------------------------------------------
+test_duplicate_branch_refusal() {
+    local repo rc err
+    repo="$(new_repo)"
+    rc=0
+    err="$(cd "$repo" && bash "$SCRIPT" --base main \
+        --group "split/db:db/m.sql" --group "split/db:src/auth/a.ts" 2>&1)" || rc=$?
+    assert_exit "duplicate branch exits 17" 17 "$rc"
+    assert_contains "duplicate branch message" "duplicate target branch name: split/db" "$err"
     rm -rf "$repo"
 }
 
@@ -118,6 +153,9 @@ test_no_groups
 test_bad_group_spec
 test_dirty_tree_refusal
 test_missing_gh
+test_execute_requires_remote
+test_protected_branch_refusal
+test_duplicate_branch_refusal
 test_non_repo_guard
 test_arg_error
 

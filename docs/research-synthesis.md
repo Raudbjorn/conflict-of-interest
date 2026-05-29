@@ -266,6 +266,7 @@ The LLMinus post-resolution compiler-error loop is also directly applicable: if 
 | **I-22** | Add `notebook-outputs` category for `.ipynb` output-only conflicts | Coverage | 🟢 Low | M | Low | ✅ |
 | **I-23** | Create `scripts/suggest-pr-split.sh` to deterministically propose functional/structural split groups (module clustering, layer classification, rename isolation) for large changes/conflicts; add `references/pr-decomposition.md`; wire into the SKILL.md large-conflict escalation | Coverage | 🟡 Medium | M | Medium | ✅ |
 | **I-24** | Add `scripts/open-stacked-prs.sh` to materialize a split plan as stacked GitHub PRs (`gh`), dry-run by default with an `--execute` gate; broaden the skill trigger to a split mode | Coverage | 🟡 Medium | M | Medium | ✅ |
+| **I-25** | Add `scripts/historical-resolution-search.sh` to retrieve similar same-repository conflict resolutions, report line-recombination evidence, and wire it into Step 3i as advisory-only intent evidence | Accuracy | 🟡 Medium | M | Medium | ✅ |
 
 **Effort key:** XS = < 1 hour · S = 1–4 hours · M = 4–8 hours · L = 1–2 days · XL = > 2 days
 
@@ -301,6 +302,19 @@ The complete node taxonomy (`TypeDef`, `MethodDef`, `GlobalVarDef`, `ImportDef`,
 
 Levin's LLMinus case study[³] showed that a RAG prompt combining (a) the current conflict in diff3 format, (b) top-3 semantically similar historical resolutions from the repo's git history, and (c) any explicit resolution instructions from the PR description produced a resolution better than the human maintainer's own suggestion in one of two conflict regions tested (Linux kernel `include/linux/mm.h`). **The practical takeaway:** checking `git log -S <symbol> --diff-filter=M` for recent resolutions of the same symbol is a one-line approximation of this pattern that the skill can adopt immediately.
 
+Implemented adaptation: `scripts/historical-resolution-search.sh` keeps the
+LLMinus idea local and dependency-light. It replays two-parent merge commits with
+`git merge-tree --write-tree`, filters to paths that actually conflicted, scores
+examples by path/language/symbol/line overlap, and reports the top matches for
+human/LLM inspection. It deliberately avoids embeddings, vector storage, and
+training in the skill runtime.
+
+Dataset generation remains future work. Merge-Bench-Builder-style export should
+require an explicit output path, strong size/path filters, and clear privacy
+warnings because historical conflict corpora can contain proprietary code or old
+secrets. Squash-only and rebase-only repositories may produce no usable examples;
+that is a normal `no_signal` result, not a failure.
+
 ### H-06 — diff3 base section is critical signal, not optional
 
 Merge-Bench's conflict anatomy uses `merge.conflictStyle = diff3`[⁵] throughout; its `split_conflict_block()` extracts the `||||||| base` section and uses it for disambiguation. The skill already requires `diff3` or `zdiff3` for stacked-PR detection. The additional insight: the base section is required for **any** reliable intent inference, not just stacked-PR detection. If the base section is absent (old-style 2-way markers), the model should warn the user before proceeding.
@@ -320,6 +334,10 @@ Per Merge-Bench per-language results[⁵]: C conflicts produce 31.1% model abste
 ### H-10 — rerere + git-imerge mutual exclusion
 
 git-imerge's README explicitly states it disables rerere because "rerere's cached resolutions can interfere with the pairwise consistency requirement" and caused incorrect merge conflict resolution in testing.[¹³] Any skill step that recommends both rerere and git-imerge in the same workflow is incorrect. The escalation path should warn: "disable `rerere.enabled` before using git-imerge."
+
+### H-11 — PR decomposition before conflict resolution
+
+Large PRs should be decomposed along refactor, dependency, functional, and ownership boundaries before they become a wall of local conflict markers. The 400-LOC review heuristic, AgenticFlict's ~25-line churn inflection, and the 87% line-combination/AST-set-union finding all point the same way: shrink the overlap surface first, then use structural merge tools such as `mergiraf` for the remaining local conflicts.
 
 ---
 
@@ -939,6 +957,7 @@ flowchart TD
 | R-10 | Stacked-PR heuristic inconsistent across invocations (LLM eyeballs similarity) | Medium | Low | I-09: script the check |
 | R-11 | Semantic audit skipped under time pressure (it's in a reference doc, not SKILL.md procedure) | High | Medium | I-10: create `semantic-audit.sh`; integrate into Step 4 |
 | R-12 | `MethodVarDef` (function parameters) changes create semantic conflicts that skip audit | Medium | Medium | I-08: add to taxonomy |
+| R-13 | Historical examples over-trusted and copied into an incompatible current conflict | Medium | High | I-25: treat history retrieval as advisory evidence only; HALT when intent remains ambiguous |
 
 ---
 

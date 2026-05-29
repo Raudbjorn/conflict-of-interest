@@ -14,7 +14,7 @@ when_to_use: >
   Do not use for abstract git education, blanket --ours/--theirs sweeps,
   force-push recovery, or general PR review.
 argument-hint: "[--abort|--continue|--split]"
-allowed-tools: Bash(git *), Bash(gh *), Bash(mergiraf *), Bash(timeout *), Bash(npm *), Bash(pnpm *), Bash(yarn *), Bash(bun *), Bash(uv *), Bash(pdm *), Bash(cargo *), Bash(poetry *), Bash(bundle *), Bash(composer *), Bash(mix *), Bash(swift *), Bash(dart *), Bash(dotnet *), Bash(nix *), Bash(python *)
+allowed-tools: Bash(git *), Bash(gh auth status), Bash(gh pr *), Bash(mergiraf *), Bash(timeout *), Bash(npm *), Bash(pnpm *), Bash(yarn *), Bash(bun *), Bash(uv *), Bash(pdm *), Bash(cargo *), Bash(poetry *), Bash(bundle *), Bash(composer *), Bash(mix *), Bash(swift *), Bash(dart *), Bash(dotnet *), Bash(nix *), Bash(python *)
 effort: high
 ---
 
@@ -73,7 +73,7 @@ Abort recommendation criteria:
 These are configurable heuristics, not empirical laws. See
 `${CLAUDE_SKILL_DIR}/references/recurring-conflicts.md`. When the unmerged count
 is 20 or more, run
-`${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --json` before
+`${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --scope both --json` before
 categorizing. If high-confidence groups exist, recommend aborting and re-landing
 as smaller PRs (refactor-baseline first); see
 `${CLAUDE_SKILL_DIR}/references/pr-decomposition.md`. This is advisory —
@@ -146,7 +146,7 @@ For each file:
 1. Measure balance. If one side is more than 3x longer, LLM analysis is more
    appropriate. If balanced, prefer line-combination reasoning and lower
    confidence. If total conflict content is over 300 lines, halt and recommend
-   decomposition: run `${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts`
+   decomposition: run `${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --scope both`
    to propose split groups, and fall back to `git-imerge` (see
    `${CLAUDE_SKILL_DIR}/references/recurring-conflicts.md`) when the change cannot
    be split (all groups low-confidence/cross-cutting).
@@ -167,11 +167,29 @@ For each file:
    git diff "$(git merge-base HEAD MERGE_HEAD)" MERGE_HEAD -- <file>
    ```
 
-5. Name the structural root cause.
-6. Infer ours/theirs intent in one sentence each.
-7. If either intent is unknown, HALT using the schema below.
-8. Classify: trivial, additive, competing, structural, modify-delete, semantic.
-9. Resolve, remove markers, stage, and produce a decision record.
+5. For human-authored source/config conflicts, retrieve similar historical
+   resolutions when the conflict is semantic, structural, competing, or intent is
+   not obvious. Do not run this for generated files, lockfiles, snapshots,
+   migrations, notebooks, binaries, submodules, or vendored output.
+
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/historical-resolution-search.sh \
+     --file <file> --top 3 --json
+   ```
+
+   Treat matches as advisory evidence only:
+   - similar past resolutions may clarify project intent or show that the
+     repository usually recombines parent lines;
+   - `no_signal` results are normal in squash/rebase-only or shallow histories;
+   - never auto-apply a historical result.
+
+   For C/C++ and other high-risk languages, require stronger intent evidence and
+   validation even when similar historical examples exist.
+6. Name the structural root cause.
+7. Infer ours/theirs intent in one sentence each.
+8. If either intent is unknown, HALT using the schema below.
+9. Classify: trivial, additive, competing, structural, modify-delete, semantic.
+10. Resolve, remove markers, stage, and produce a decision record.
 
 ### Step 4 — Validate
 
@@ -260,6 +278,7 @@ Produce Markdown plus fenced JSON:
 |---|---|
 | Category | lockfile / migration / submodule / binary / generated / snapshot / notebook / mergiraf / other |
 | Evidence sources checked | commit-msg / ancestor-diff / related-files / PR-refs |
+| Historical resolutions checked | none / no-signal:<reason> / <N examples: sha:path> |
 | Intent (ours) | <sentence or UNKNOWN> |
 | Intent (theirs) | <sentence or UNKNOWN> |
 | Root cause | <structural cause> |
@@ -315,7 +334,7 @@ routes here. Full guidance: `${CLAUDE_SKILL_DIR}/references/pr-decomposition.md`
 # pre-conflict: analyze a PR/branch range
 ${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --base <base-ref> --head <head-ref> --json
 # in an oversized conflict
-${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --json
+${CLAUDE_SKILL_DIR}/scripts/suggest-pr-split.sh --conflicts --scope both --json
 ```
 
 Present the proposed groups in merge order (refactor-baseline first, then
@@ -331,12 +350,16 @@ ${CLAUDE_SKILL_DIR}/scripts/open-stacked-prs.sh --base <trunk-branch> --head <he
   --group "<branch>:<path,path>" --group "<branch>:<path,path>"
 ```
 
-`open-stacked-prs.sh` is dry-run by default and prints the `git`/`gh` plan.
+`open-stacked-prs.sh` is dry-run by default and prints the `git`/`gh` plan. It
+synthesizes new commits from path groups; it does not preserve original commit
+topology unless the user explicitly supplied commit-aligned groups.
 
 ### Step S3 — Confirm, then execute
 
 Creating branches and PRs is outward-facing. Show the dry-run plan and obtain
-**explicit user confirmation** before re-running with `--execute`. Each split must
-compile/typecheck on its own; verify before opening the next PR. Retarget children
-to the trunk as parents merge (`gh pr edit <n> --base <trunk>`).
-
+**explicit user confirmation** before re-running with `--execute --remote <name>`.
+The script refuses dirty trees, protected/default branches, missing `gh` auth, and
+pre-existing local/remote branch names unless the user explicitly changes the
+plan. Each split must compile/typecheck on its own; verify before opening the next
+PR. Retarget children to the trunk as parents merge (`gh pr edit <n> --base
+<trunk>`).

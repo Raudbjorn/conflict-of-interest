@@ -10,6 +10,7 @@ base_ref=""
 other_ref=""
 include_snippets=false
 json=false
+explicit_files=false
 files=()
 symbols=()
 
@@ -114,13 +115,22 @@ no_signal() {
     exit 2
 }
 
+error_json() {
+    local reason="$1"
+    printf '{"version":1,"query":'
+    emit_query_json
+    printf ',"status":"error","reason":'
+    json_string "$reason"
+    printf ',"matches":[]}\n'
+}
+
 is_positive_int() {
     [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --file) [ "$#" -ge 2 ] || die_usage "--file needs a path"; files+=("$2"); shift 2 ;;
+        --file) [ "$#" -ge 2 ] || die_usage "--file needs a path"; files+=("$2"); explicit_files=true; shift 2 ;;
         --symbol) [ "$#" -ge 2 ] || die_usage "--symbol needs a name"; symbols+=("$2"); shift 2 ;;
         --language) [ "$#" -ge 2 ] || die_usage "--language needs an id"; language="$2"; shift 2 ;;
         --base) [ "$#" -ge 2 ] || die_usage "--base needs a ref"; base_ref="$2"; shift 2 ;;
@@ -151,9 +161,10 @@ fi
 
 if ! { git merge-tree -h 2>&1 || true; } | grep -q -- '--write-tree'; then
     if $json; then
-        no_signal "merge_tree_unavailable"
+        error_json "merge_tree_unavailable"
+    else
+        echo "ERROR: git merge-tree --write-tree is required" >&2
     fi
-    echo "ERROR: git merge-tree --write-tree is required" >&2
     exit 12
 fi
 
@@ -161,6 +172,12 @@ if [ "${#files[@]}" -eq 0 ]; then
     while IFS= read -r path; do
         [ -n "$path" ] && files+=("$path")
     done < <(git diff --name-only --diff-filter=U)
+fi
+
+if $explicit_files; then
+    for file in "${files[@]}"; do
+        [ -f "$file" ] && [ -r "$file" ] || die_usage "--file is not a readable regular file: $file"
+    done
 fi
 
 normalize_lines() {
@@ -221,14 +238,15 @@ extension_of() {
 }
 
 ratio_decimal() {
-    local left="$1" right="$2" mode="$3" tmp_left tmp_right left_count right_count both_count denom
-    tmp_left="$(mktemp "${TMPDIR:-/tmp}/history-left.XXXXXX")"
-    tmp_right="$(mktemp "${TMPDIR:-/tmp}/history-right.XXXXXX")"
-    printf '%s\n' "$left" | normalize_lines > "$tmp_left"
-    printf '%s\n' "$right" | normalize_lines > "$tmp_right"
-    left_count="$(awk 'NF {n++} END {print n + 0}' "$tmp_left")"
-    right_count="$(awk 'NF {n++} END {print n + 0}' "$tmp_right")"
-    both_count="$(comm -12 "$tmp_left" "$tmp_right" | awk 'NF {n++} END {print n + 0}')"
+    local left="$1" right="$2" mode="$3" left_count right_count both_count denom
+    left_count="$(printf '%s\n' "$left" | normalize_lines | awk 'NF {n++} END {print n + 0}')"
+    right_count="$(printf '%s\n' "$right" | normalize_lines | awk 'NF {n++} END {print n + 0}')"
+    both_count="$(
+        comm -12 \
+            <(printf '%s\n' "$left" | normalize_lines) \
+            <(printf '%s\n' "$right" | normalize_lines) |
+            awk 'NF {n++} END {print n + 0}'
+    )"
     if [ "$mode" = "jaccard" ]; then
         denom=$((left_count + right_count - both_count))
     else
@@ -239,7 +257,6 @@ ratio_decimal() {
     else
         awk -v both="$both_count" -v denom="$denom" 'BEGIN { printf "%.2f", both / denom }'
     fi
-    rm -f "$tmp_left" "$tmp_right"
 }
 
 contains_path() {
@@ -372,10 +389,15 @@ start_epoch="$(date +%s)"
 merge_index=0
 timed_out=false
 
+merge_commits=()
 if [ -n "$since" ]; then
-    mapfile -t merge_commits < <(git log --merges --format=%H --max-count="$max_merges" --since="$since")
+    while IFS= read -r commit; do
+        [ -n "$commit" ] && merge_commits+=("$commit")
+    done < <(git log --merges --format=%H --max-count="$max_merges" --since="$since")
 else
-    mapfile -t merge_commits < <(git log --merges --format=%H --max-count="$max_merges")
+    while IFS= read -r commit; do
+        [ -n "$commit" ] && merge_commits+=("$commit")
+    done < <(git log --merges --format=%H --max-count="$max_merges")
 fi
 
 for commit in "${merge_commits[@]}"; do
@@ -487,7 +509,10 @@ if [ ! -s "$candidate_file" ]; then
     no_signal "no_conflicted_candidate_paths"
 fi
 
-mapfile -t matches < <(sort -t $'\t' -k1,1nr -k3,3r -k2,2 "$candidate_file" | head -n "$top")
+matches=()
+while IFS= read -r match; do
+    [ -n "$match" ] && matches+=("$match")
+done < <(sort -t $'\t' -k1,1nr -k3,3r -k2,2 "$candidate_file" | head -n "$top")
 
 if $json; then
     printf '{"version":1,"query":'

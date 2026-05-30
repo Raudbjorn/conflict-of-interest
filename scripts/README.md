@@ -12,6 +12,11 @@ Runtime helpers for the `git-conflict-resolver` skill.
 | `semantic-audit.sh` | Heuristically flag post-resolution semantic-conflict suspects |
 | `suggest-pr-split.sh` | Propose functional/structural split groups for a large range or conflict (`--scope unmerged\|incoming-range\|both`) |
 | `open-stacked-prs.sh` | Materialize a split plan as stacked GitHub PRs (dry-run by default; `--execute --remote <name>` requires `gh`) |
+| `meta-route.sh` | Per-file deterministic router over category, balance, stacked-PR, and (optional) history signals; emits JSON/TSV audit trail for `SKILL.md` Step 3i |
+| `sbse-recombine.sh` | Bounded line-combination candidate generator for balanced `other` conflicts (7 deterministic strategies, ranked by Jaccard to both parents) |
+| `prompt-context.sh` | Hard-capped Rover-style cross-file context bundle (BFS over `git grep -w` from extracted symbols, k=4 / 48-hit / 12 KB budget) |
+| `validate-and-reprompt.sh` | Bounded debug-prompt loop wrapper around `validate-resolution.sh`; emits `reprompt.md` artifact on failure, never calls an LLM |
+| `lib/jaccard.sh` | Shared whitespace-normalised line-set Jaccard similarity helper (sourced by `detect-stacked-pr.sh` and `sbse-recombine.sh`) |
 
 Run all tests from the repository root:
 

@@ -141,6 +141,17 @@ mergiraf, fall through to `other`. Otherwise stage the file.
 
 #### 3i. Other files
 
+Before per-file resolution, route deterministically (advisory; the prose steps
+below are unchanged):
+
+```bash
+${CLAUDE_SKILL_DIR}/scripts/meta-route.sh --unmerged-only --json
+```
+
+Record each file's `route`, `reason`, and `confidence` into the per-file
+Decision Record. The router augments and audits judgment; it does not replace
+it. See `${CLAUDE_SKILL_DIR}/references/meta-resolver.md`.
+
 For each file:
 
 1. Measure balance. If one side is more than 3x longer, LLM analysis is more
@@ -150,6 +161,18 @@ For each file:
    to propose split groups, and fall back to `git-imerge` (see
    `${CLAUDE_SKILL_DIR}/references/recurring-conflicts.md`) when the change cannot
    be split (all groups low-confidence/cross-cutting).
+1a. If balanced (with a diff3 base) and ≤ 400 lines, enumerate line-combination
+    candidates:
+
+    ```bash
+    ${CLAUDE_SKILL_DIR}/scripts/sbse-recombine.sh --file <file> --top 3 --json
+    ```
+
+    Advisory: a `clear-winner` verdict (top ≥ 95, gap ≥ 10) supports the
+    `additive` / `trivial` classification at step 9. An `ambiguous` verdict
+    (top three within 5) is itself a HALT signal — pick by intent, not by
+    score. `deferred` means the block exceeds the SBSE bound (>400 lines or
+    >3x imbalance); fall through to the LLM path. See H-02 / I-27.
 2. If one side is empty, classify as `modify-delete` and inspect commit order
    with `git log --oneline --left-right --merge -- <file>`.
 3. Run stacked-PR detection:
@@ -167,6 +190,15 @@ For each file:
    git diff "$(git merge-base HEAD MERGE_HEAD)" MERGE_HEAD -- <file>
    ```
 
+4a. Build a hard-capped cross-file context bundle:
+
+    ```bash
+    ${CLAUDE_SKILL_DIR}/scripts/prompt-context.sh --file <file> --k 4
+    ```
+
+    Use the bundle (not freeform `git grep`) as the LLM context for intent
+    inference. The `k=4` / 48-hit / 12 KB budget is empirically motivated
+    (H-03 Rover ablation); deeper context degrades accuracy. See I-28.
 5. For human-authored source/config conflicts, retrieve similar historical
    resolutions when the conflict is semantic, structural, competing, or intent is
    not obvious. Do not run this for generated files, lockfiles, snapshots,
@@ -194,10 +226,17 @@ For each file:
 ### Step 4 — Validate
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/validate-resolution.sh \
+${CLAUDE_SKILL_DIR}/scripts/validate-and-reprompt.sh \
   --typecheck '<project-typecheck-cmd>' \
-  --test '<focused-test-cmd>'
+  --test '<focused-test-cmd>' \
+  --max-iterations 1
 ```
+
+Exit code 5 means the script wrote a reprompt artifact at
+`.git/conflict-resolver/reprompt.md`. Read it, re-resolve the named files,
+and re-invoke. The retry budget is bounded (default 1); on exhaustion the
+script exits with the underlying error and you must HALT. The wrapper never
+calls an LLM — Claude is the orchestrator (I-29).
 
 Then run:
 
@@ -277,6 +316,7 @@ Produce Markdown plus fenced JSON:
 | Field | Value |
 |---|---|
 | Category | lockfile / migration / submodule / binary / generated / snapshot / notebook / mergiraf / other |
+| Route (meta-router) | mechanical / stacked-auto / sbse-recombine / llm-imbalanced / llm-with-history / halt-decomposition / halt-other — reason |
 | Evidence sources checked | commit-msg / ancestor-diff / related-files / PR-refs |
 | Historical resolutions checked | none / no-signal:<reason> / <N examples: sha:path> |
 | Intent (ours) | <sentence or UNKNOWN> |

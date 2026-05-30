@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=lib/jaccard.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/jaccard.sh"
+
 threshold_auto=95
 threshold_ask=70
 input_file=""
@@ -25,21 +28,7 @@ else
     input="$(cat)"
 fi
 
-similarity() {
-    local left="$1" right="$2"
-    local norm_left norm_right left_count right_count both_count union_count
-    norm_left="$(printf '%s\n' "$left" | sed -E 's/[[:space:]]+//g' | awk 'NF' | sort -u)"
-    norm_right="$(printf '%s\n' "$right" | sed -E 's/[[:space:]]+//g' | awk 'NF' | sort -u)"
-    left_count="$(printf '%s\n' "$norm_left" | awk 'NF {n++} END {print n + 0}')"
-    right_count="$(printf '%s\n' "$norm_right" | awk 'NF {n++} END {print n + 0}')"
-    if [ "$left_count" -eq 0 ] && [ "$right_count" -eq 0 ]; then
-        echo 100
-        return
-    fi
-    both_count="$(comm -12 <(printf '%s\n' "$norm_left") <(printf '%s\n' "$norm_right") | awk 'NF {n++} END {print n + 0}')"
-    union_count=$((left_count + right_count - both_count))
-    [ "$union_count" -eq 0 ] && echo 100 || echo $((both_count * 100 / union_count))
-}
+similarity() { jaccard_similarity_pct "$@"; }
 
 verdicts=()
 in_block=0

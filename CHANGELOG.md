@@ -20,3 +20,13 @@
   `scripts/historical-resolution-search.sh` mines real two-parent conflict
   resolutions from Git history, reports line-recombination evidence, and is wired
   into `SKILL.md` as advisory-only intent evidence.
+- Added meta-resolver layer: `scripts/meta-route.sh` (per-file deterministic
+  router over category, balance, stacked-PR, and optional history signals),
+  `scripts/sbse-recombine.sh` (bounded line-combination candidate generator
+  operationalising the 87% rule), `scripts/prompt-context.sh` (Rover-style
+  cross-file context bundle with hard caps at `k=4`/48 hits/12 KB), and
+  `scripts/validate-and-reprompt.sh` (LLMinus-style debug-prompt artifact loop
+  around `validate-resolution.sh` — never calls an LLM). Companion reference:
+  `references/meta-resolver.md`.
+- Extracted shared `scripts/lib/jaccard.sh` helper; `detect-stacked-pr.sh` now
+  sources it (existing test suite green as the regression gate).

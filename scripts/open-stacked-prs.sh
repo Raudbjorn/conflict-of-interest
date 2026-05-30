@@ -34,14 +34,11 @@ require_value() {
     [ "$#" -ge 2 ] || usage_error "$1 needs a value"
 }
 
-join_paths() {
-    # Convert the comma-separated path list used in --group and --from-json
-    # into the newline-separated form stored internally. Newline is robust
-    # against paths that contain commas (which `--group-path` exposes).
-    printf '%s' "$1" | tr ',' '\n'
-}
-
 add_group() {
+    # Internally, gpaths is newline-separated to stay robust against paths
+    # that contain commas (which --group-path exposes). Translate the
+    # comma-separated --group form with pure-bash parameter expansion to
+    # avoid a tr subshell on every call.
     local spec="$1" name rest
     case "$spec" in
         *:*) ;;
@@ -52,7 +49,7 @@ add_group() {
     [ -n "$name" ] || usage_error "--group name is empty"
     [ -n "$rest" ] || usage_error "--group '$name' has no paths"
     gnames+=("$name")
-    gpaths+=("$(join_paths "$rest")")
+    gpaths+=("${rest//,/$'\n'}")
 }
 
 add_group_path() {
@@ -110,8 +107,10 @@ fi
 
 if $from_json; then
     command -v python3 >/dev/null 2>&1 || usage_error "--from-json requires python3"
-    # Capture combined stdout/stderr and check exit so JSON parse failures
-    # surface as a clear error instead of degrading into "no groups given".
+    # Capture stdout only and check exit so JSON parse failures surface as a
+    # clear error instead of degrading into "no groups given". Let stderr flow
+    # naturally to the terminal — folding it into stdout would corrupt
+    # parsed_groups with python tracebacks that look like group definitions.
     parsed_groups="$(python3 -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -119,15 +118,14 @@ for g in d.get("groups", []):
     paths = ",".join(f["path"] for f in g.get("files", []) if f.get("path"))
     if paths:
         print(g.get("id", "group") + "\t" + paths)
-' 2>&1)" || {
+')" || {
         echo "ERROR: --from-json failed to parse stdin as JSON" >&2
-        [ -n "$parsed_groups" ] && printf '%s\n' "$parsed_groups" >&2
         exit 19
     }
     while IFS=$'\t' read -r gid paths; do
         [ -n "$gid" ] || continue
         gnames+=("split/$(sanitize_branch_part "$gid")")
-        gpaths+=("$(join_paths "$paths")")
+        gpaths+=("${paths//,/$'\n'}")
     done <<< "$parsed_groups"
 fi
 
@@ -194,7 +192,7 @@ $draft && gh_pr_args+=(--draft)
 
 for idx in "${!gnames[@]}"; do
     branch="${gnames[$idx]}"
-    mapfile -t paths < <(printf '%s' "${gpaths[$idx]}")
+    mapfile -t paths <<< "${gpaths[$idx]}"
     title="$branch"
     body="Stacked PR carved from ${head_ref}. Base: ${prev_base}. Part of a PR decomposition; retarget to ${base} as parents merge."
     echo "# Group $((idx + 1)): ${branch}  (base: ${prev_base}, ${#paths[@]} path(s))"

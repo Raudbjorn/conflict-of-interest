@@ -285,6 +285,23 @@ test_conflict_scopes() {
     rm -rf "$repo"
 }
 
+# --- unit: json_escape handles control chars + named escapes --------------
+test_json_escape() {
+    assert_eq "newline -> \\n" 'a\nb' "$(json_escape "$(printf 'a\nb')")"
+    assert_eq "tab -> \\t" 'a\tb' "$(json_escape "$(printf 'a\tb')")"
+    assert_eq "CR -> \\r" 'a\rb' "$(json_escape "$(printf 'a\rb')")"
+    assert_eq "BS -> \\b" 'a\bb' "$(json_escape "$(printf 'a\bb')")"
+    assert_eq "FF -> \\f" 'a\fb' "$(json_escape "$(printf 'a\fb')")"
+    # printf interprets \\u as \u, so the expected output is the literal
+    # 8-char string a\u0001b (with a real backslash, not a control char).
+    assert_eq "SOH -> \\u0001" "$(printf 'a\\u0001b')" "$(json_escape "$(printf 'a\x01b')")"
+    assert_eq "US 0x1f -> \\u001f" "$(printf 'a\\u001fb')" "$(json_escape "$(printf 'a\x1fb')")"
+    assert_eq "quote -> \\\"" 'he said \"hi\"' "$(json_escape 'he said "hi"')"
+    assert_eq "backslash -> \\\\" 'a\\b' "$(json_escape 'a\b')"
+    assert_eq "plain pass-through" 'src/auth/charge.ts' "$(json_escape 'src/auth/charge.ts')"
+}
+
+test_json_escape
 test_layer_classification
 test_module_clustering_unit
 test_layer_separation

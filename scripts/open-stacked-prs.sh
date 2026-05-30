@@ -35,6 +35,10 @@ require_value() {
 }
 
 add_group() {
+    # Internally, gpaths is newline-separated to stay robust against paths
+    # that contain commas (which --group-path exposes). Translate the
+    # comma-separated --group form with pure-bash parameter expansion to
+    # avoid a tr subshell on every call.
     local spec="$1" name rest
     case "$spec" in
         *:*) ;;
@@ -45,7 +49,21 @@ add_group() {
     [ -n "$name" ] || usage_error "--group name is empty"
     [ -n "$rest" ] || usage_error "--group '$name' has no paths"
     gnames+=("$name")
-    gpaths+=("$rest")
+    gpaths+=("${rest//,/$'\n'}")
+}
+
+add_group_path() {
+    local name="$1" path="$2" i
+    [ -n "$name" ] || usage_error "--group-path needs a non-empty NAME"
+    [ -n "$path" ] || usage_error "--group-path '$name' needs a non-empty PATH"
+    for ((i = 0; i < ${#gnames[@]}; i++)); do
+        if [ "${gnames[$i]}" = "$name" ]; then
+            gpaths[$i]+=$'\n'"$path"
+            return
+        fi
+    done
+    gnames+=("$name")
+    gpaths+=("$path")
 }
 
 sanitize_branch_part() {
@@ -58,6 +76,11 @@ while [ "$#" -gt 0 ]; do
         --head) require_value "$@"; head_ref="$2"; shift 2 ;;
         --remote) require_value "$@"; remote="$2"; remote_set=true; shift 2 ;;
         --group) require_value "$@"; add_group "$2"; shift 2 ;;
+        --group-path)
+            [ "$#" -ge 3 ] || usage_error "--group-path needs NAME PATH"
+            add_group_path "$2" "$3"
+            shift 3
+            ;;
         --from-json) from_json=true; shift ;;
         --execute) execute=true; shift ;;
         --allow-dirty) allow_dirty=true; shift ;;
@@ -84,18 +107,26 @@ fi
 
 if $from_json; then
     command -v python3 >/dev/null 2>&1 || usage_error "--from-json requires python3"
-    while IFS=$'\t' read -r gid paths; do
-        [ -n "$gid" ] || continue
-        gnames+=("split/$(sanitize_branch_part "$gid")")
-        gpaths+=("$paths")
-    done < <(python3 -c '
+    # Capture stdout only and check exit so JSON parse failures surface as a
+    # clear error instead of degrading into "no groups given". Let stderr flow
+    # naturally to the terminal — folding it into stdout would corrupt
+    # parsed_groups with python tracebacks that look like group definitions.
+    parsed_groups="$(python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 for g in d.get("groups", []):
     paths = ",".join(f["path"] for f in g.get("files", []) if f.get("path"))
     if paths:
         print(g.get("id", "group") + "\t" + paths)
-')
+')" || {
+        echo "ERROR: --from-json failed to parse stdin as JSON" >&2
+        exit 19
+    }
+    while IFS=$'\t' read -r gid paths; do
+        [ -n "$gid" ] || continue
+        gnames+=("split/$(sanitize_branch_part "$gid")")
+        gpaths+=("${paths//,/$'\n'}")
+    done <<< "$parsed_groups"
 fi
 
 [ "${#gnames[@]}" -gt 0 ] || { echo "ERROR: no groups given (use --group or --from-json)" >&2; exit 15; }
@@ -161,7 +192,7 @@ $draft && gh_pr_args+=(--draft)
 
 for idx in "${!gnames[@]}"; do
     branch="${gnames[$idx]}"
-    IFS=',' read -ra paths <<< "${gpaths[$idx]}"
+    mapfile -t paths <<< "${gpaths[$idx]}"
     title="$branch"
     body="Stacked PR carved from ${head_ref}. Base: ${prev_base}. Part of a PR decomposition; retarget to ${base} as parents merge."
     echo "# Group $((idx + 1)): ${branch}  (base: ${prev_base}, ${#paths[@]} path(s))"

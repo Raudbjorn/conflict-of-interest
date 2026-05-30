@@ -148,6 +148,67 @@ test_arg_error() {
     rm -rf "$repo"
 }
 
+# --- --group-path repeatable, no comma split -------------------------------
+test_group_path_accumulates() {
+    local repo rc out
+    repo="$(new_repo)"
+    rc=0
+    out="$(cd "$repo" && bash "$SCRIPT" --base main --head HEAD \
+        --group-path split/x db/m.sql \
+        --group-path split/x src/auth/a.ts)" || rc=$?
+    assert_exit "group-path dry-run exits 0" 0 "$rc"
+    assert_contains "first path present" "db/m.sql" "$out"
+    assert_contains "second path present" "src/auth/a.ts" "$out"
+    assert_contains "single restore line per group" "git restore --source=HEAD --staged --worktree -- db/m.sql src/auth/a.ts" "$out"
+    rm -rf "$repo"
+}
+
+test_group_path_tolerates_commas_in_paths() {
+    local repo rc out
+    repo="$(new_repo)"
+    mkdir -p "$repo/weird"
+    printf 'x\n' > "$repo/weird/a,b.txt"
+    git -C "$repo" add -A
+    git -C "$repo" commit -qm "comma"
+    rc=0
+    out="$(cd "$repo" && bash "$SCRIPT" --base main --head HEAD \
+        --group-path split/c "weird/a,b.txt")" || rc=$?
+    assert_exit "comma-in-path dry-run exits 0" 0 "$rc"
+    # printf %q escapes the literal comma as `\,`; assert the path appears as a
+    # single argument rather than being split into two.
+    assert_contains "comma path passed as one arg" 'weird/a\,b.txt' "$out"
+    rm -rf "$repo"
+}
+
+test_group_path_needs_name_and_path() {
+    local repo rc
+    repo="$(new_repo)"
+    rc=0
+    (cd "$repo" && bash "$SCRIPT" --base main --group-path only-name) >/dev/null 2>&1 || rc=$?
+    assert_exit "missing PATH arg exits 10" 10 "$rc"
+    rm -rf "$repo"
+}
+
+# --- --from-json fail-fast on invalid JSON ---------------------------------
+test_from_json_bad_input_exit_19() {
+    local repo rc err
+    repo="$(new_repo)"
+    rc=0
+    err="$(cd "$repo" && echo 'NOT JSON' | bash "$SCRIPT" --base main --from-json 2>&1 1>/dev/null)" || rc=$?
+    assert_exit "invalid --from-json JSON exits 19" 19 "$rc"
+    assert_contains "explicit parse-failure message" "failed to parse stdin as JSON" "$err"
+}
+
+# --- --from-json valid-but-empty -> existing exit 15 -----------------------
+test_from_json_empty_groups_exit_15() {
+    local repo rc
+    repo="$(new_repo)"
+    rc=0
+    (cd "$repo" && echo '{"groups":[]}' | bash "$SCRIPT" --base main --from-json) >/dev/null 2>&1 || rc=$?
+    assert_exit "valid-but-empty JSON exits 15 (no groups)" 15 "$rc"
+    rm -rf "$repo"
+}
+
 test_dry_run_plan
 test_no_groups
 test_bad_group_spec
@@ -158,6 +219,11 @@ test_protected_branch_refusal
 test_duplicate_branch_refusal
 test_non_repo_guard
 test_arg_error
+test_group_path_accumulates
+test_group_path_tolerates_commas_in_paths
+test_group_path_needs_name_and_path
+test_from_json_bad_input_exit_19
+test_from_json_empty_groups_exit_15
 
 echo ""
 echo "Results: $passes passed, $failures failed"

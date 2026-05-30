@@ -1034,14 +1034,14 @@ flowchart TD
 
 ---
 
-## 13. Python v2 plans (deferred)
+## 14. Python v2 plans (deferred)
 
 Two scripts in the meta-resolver layer have a deferred Python v2 documented here
 so the shell-only v1 has a clear off-ramp when it stops paying for itself. Both
 are gated behind `Bash(python *)` which is already in `allowed-tools`; neither
 is built in the v1 PR.
 
-### 13.1 `prompt-context.sh` — tree-sitter / Lanser-CLI
+### 14.1 `prompt-context.sh` — tree-sitter / Lanser-CLI
 
 The shell v1 walks `git grep -w` BFS from extracted identifier seeds. That is
 the "poor-man's Rover" — it has no syntactic understanding and counts an
@@ -1073,7 +1073,7 @@ Trigger to build: when the v1 false-positive rate empirically exceeds ~30% of
 emitted hits (measured by manually classifying the bundle on 20 real
 conflicts), or when a user repository explicitly opts in via a config flag.
 
-### 13.2 `sbse-recombine.sh` — full RRHC in Python
+### 14.2 `sbse-recombine.sh` — full RRHC in Python
 
 v1 enumerates 7 deterministic line-combination strategies and ranks by mean
 Jaccard. The 87% line-combination finding (H-02) is matched by a much smaller

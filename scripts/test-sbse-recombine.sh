@@ -237,11 +237,34 @@ test_defer_imbalance
 test_no_blocks
 test_determinism
 test_json_shape
+# --- regression: json_escape handles multiline bodies under --include-content
+test_include_content_emits_valid_json() {
+    local repo rc out
+    repo="$(new_repo)"
+    write_balanced "$repo/conflict.txt"
+    rc=0
+    out="$(cd "$repo" && bash "$SCRIPT" --file conflict.txt --include-content --json)" || rc=$?
+    assert_exit "include-content exits 0" 0 "$rc"
+    if command -v python3 >/dev/null 2>&1; then
+        if printf '%s' "$out" | python3 -m json.tool >/dev/null 2>&1; then pass
+        else fail "include-content JSON must round-trip through python json.tool"
+        fi
+    else
+        echo "SKIP: python3 absent, skipping JSON validity check"
+        pass
+    fi
+    # Body had newlines — they must appear in the JSON as \n literal, not as
+    # a real LF that would break JSON parsers and the line-oriented downstream.
+    assert_contains "literal \\n escape present" '\n' "$out"
+    rm -rf "$repo"
+}
+
 test_identical_sides
 test_block_out_of_range
 test_arg_errors
 test_non_repo_guard
 test_include_content
+test_include_content_emits_valid_json
 test_jaccard_lib
 
 echo ""

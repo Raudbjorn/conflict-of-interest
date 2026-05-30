@@ -81,6 +81,18 @@ main() {
     done
     [ -n "$file" ] || { echo "ERROR: --file is required" >&2; exit 10; }
     [ -r "$file" ] || { echo "ERROR: cannot read $file" >&2; exit 10; }
+    # Canonicalize --file to a repo-relative path so the self-hit guard further
+    # down matches `git grep`'s output regardless of how the caller spelled it
+    # (`./foo`, absolute path, etc.). Falls back to the original string if the
+    # path is not tracked.
+    local repo_root canonical_file
+    repo_root="$(git rev-parse --show-toplevel)"
+    if [[ "$file" = "$repo_root/"* ]]; then
+        file="${file#"$repo_root"/}"
+    else
+        canonical_file="$(git -C "$repo_root" ls-files --full-name -- "$file" 2>/dev/null | head -n1 || true)"
+        [ -n "$canonical_file" ] && file="$canonical_file"
+    fi
     for v in k max_hits max_bytes max_seeds; do
         case "${!v}" in ''|*[!0-9]*) echo "ERROR: --${v//_/-} must be an integer" >&2; exit 10 ;; esac
     done
@@ -94,12 +106,13 @@ main() {
         printf '%s\n' "${extra_seeds[@]+"${extra_seeds[@]}"}"
         printf '%s\n' "$auto_seeds"
     )"
-    # dedupe preserving order; cap to max_seeds
+    # dedupe preserving order; cap to max_seeds. Check the cap BEFORE appending
+    # so `--max-seeds 0` honours its contract (no seeds appended at all).
     local seeds=()
     while IFS= read -r s; do
         [ -n "$s" ] || continue
-        seeds+=("$s")
         [ "${#seeds[@]}" -ge "$max_seeds" ] && break
+        seeds+=("$s")
     done < <(printf '%s\n' "$combined_seeds" | awk '!seen[$0]++')
 
     if [ "${#seeds[@]}" -eq 0 ]; then
@@ -161,7 +174,9 @@ main() {
         done <<< "$frontier"
         frontier="$next_frontier"
         [ -z "${frontier// /}" ] && break
-        $truncated && break
+        # Don't invoke $truncated as a command (`true`/`false` are real
+        # binaries on PATH); compare its string value explicitly.
+        [ "$truncated" = true ] && break
     done
 
     # Emit.

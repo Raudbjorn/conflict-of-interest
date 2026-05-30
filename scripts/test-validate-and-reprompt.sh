@@ -172,6 +172,36 @@ test_non_repo_guard() {
     rm -rf "$dir"
 }
 
+# --- regression: --state-file outside .git/conflict-resolver/ is rejected ---
+test_state_file_out_of_tree_rejected() {
+    local repo rc err out_path
+    repo="$(new_repo)"
+    out_path="$(mktemp -u "${TMPDIR:-/tmp}/vr-out-of-tree.XXXXXX.json")"
+    rc=0
+    err="$(cd "$repo" && bash "$SCRIPT" --state-file "$out_path" 2>&1)" || rc=$?
+    assert_exit "out-of-tree --state-file rejected with exit 10" 10 "$rc"
+    assert_contains "rejection mentions artifact-root prefix" "must live under" "$err"
+    # And: no artifact was written to the rogue location.
+    assert_file_absent "no rogue state-file created" "$out_path"
+    rm -rf "$repo"
+}
+
+# --- regression: artifact preserves --include-path in printed commands ------
+test_artifact_preserves_include_path() {
+    local repo rc artifact
+    repo="$(new_repo)"
+    # Force a typecheck failure so the artifact is written; pass an
+    # --include-path that the artifact must echo back faithfully.
+    rc=0
+    (cd "$repo" && bash "$SCRIPT" --typecheck 'false' --include-path 'src/billing/**') >/dev/null 2>&1 || rc=$?
+    assert_exit "typecheck failure exits 5 (retry requested)" 5 "$rc"
+    artifact="$repo/.git/conflict-resolver/reprompt.md"
+    assert_file_exists "artifact written" "$artifact"
+    assert_contains "validate command preserves --include-path" "--include-path src/billing" "$(cat "$artifact")"
+    assert_contains "rerun command preserves --include-path" "--include-path src/billing" "$(cat "$artifact")"
+    rm -rf "$repo"
+}
+
 test_pass_case
 test_typecheck_fail_first_iter
 test_budget_exhausted
@@ -182,6 +212,8 @@ test_max_iter_2
 test_max_iter_0
 test_arg_errors
 test_non_repo_guard
+test_state_file_out_of_tree_rejected
+test_artifact_preserves_include_path
 
 echo ""
 echo "Results: $passes passed, $failures failed"

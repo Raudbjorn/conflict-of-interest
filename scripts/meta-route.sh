@@ -22,13 +22,13 @@ json_escape() {
 # Sum lines on each side across all conflict blocks in a file plus a 0/1 flag
 # for whether any block carried a diff3 base section. Prints "left base right has_base".
 parse_balance() {
-    local file="$1" line in_block=0 section="" left=0 base=0 right=0 has_base=0
+    local file="$1" line in_block=0 section="" left=0 base=0 right=0 has_base=0 n_blocks=0
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
             '<<<<<<< '*) in_block=1; section=left ;;
             '||||||| '*) [ "$in_block" -eq 1 ] && { section=base; has_base=1; } ;;
             '=======')   [ "$in_block" -eq 1 ] && section=right ;;
-            '>>>>>>> '*) [ "$in_block" -eq 1 ] && in_block=0 ;;
+            '>>>>>>> '*) [ "$in_block" -eq 1 ] && { in_block=0; n_blocks=$((n_blocks + 1)); } ;;
             *)
                 if [ "$in_block" -eq 1 ]; then
                     case "$section" in
@@ -39,7 +39,7 @@ parse_balance() {
                 fi ;;
         esac
     done < "$file"
-    printf '%s %s %s %s\n' "$left" "$base" "$right" "$has_base"
+    printf '%s %s %s %s %s\n' "$left" "$base" "$right" "$has_base" "$n_blocks"
 }
 
 # Aggregate detect-stacked-pr.sh's per-block JSON: prints
@@ -148,8 +148,8 @@ main() {
                 route="halt-other"; reason="subcall_failed=worktree_unreadable"; conf="none"
             else
                 # Balance signals.
-                local left base right has_base
-                read -r left base right has_base < <(parse_balance "$f")
+                local left base right has_base n_blocks
+                read -r left base right has_base n_blocks < <(parse_balance "$f")
                 total_lines=$((left + right))
                 has_base_field="$( [ "$has_base" -eq 1 ] && echo true || echo false )"
                 local max=$left min=$right
@@ -164,50 +164,77 @@ main() {
                     imbalance_ratio="$(printf '%d.%02d' $((scaled/100)) $((scaled%100)))"
                 fi
 
-                # Stacked-PR aggregation.
-                local stk_out stk_agg num all_ah has_ask min_pct
-                stk_out="$("$SCRIPT_DIR/detect-stacked-pr.sh" --file "$f" --auto "$auto_stacked" --ask "$ask_stacked" --json 2>/dev/null || true)"
-                read -r num all_ah has_ask min_pct < <(aggregate_stacked "$stk_out")
-                if [ "$num" -gt 0 ]; then
-                    if [ "$all_ah" -eq 1 ]; then
-                        stacked_verdict='"AUTO_HEAD"'
-                    elif [ "$has_ask" -eq 1 ]; then
-                        stacked_verdict='"ASK"'
-                    else
-                        stacked_verdict='"MIXED"'
-                    fi
-                    stacked_pct="$min_pct"
-                fi
+                # Stacked-PR aggregation. Treat exit 0 (blocks present) and 1
+                # (no blocks found) as legitimate "signal" / "no signal" outcomes;
+                # any other code (10/11/12, etc.) is a real subcall failure and
+                # must halt routing rather than be silently treated as absence.
+                local stk_out stk_rc=0 subcall_failed=false
+                local num=0 all_ah=0 has_ask=0 min_pct=null
+                stk_out="$("$SCRIPT_DIR/detect-stacked-pr.sh" --file "$f" --auto "$auto_stacked" --ask "$ask_stacked" --json 2>/dev/null)" || stk_rc=$?
+                case "$stk_rc" in
+                    0|1)
+                        read -r num all_ah has_ask min_pct < <(aggregate_stacked "$stk_out")
+                        if [ "$num" -gt 0 ]; then
+                            if [ "$all_ah" -eq 1 ]; then
+                                stacked_verdict='"AUTO_HEAD"'
+                            elif [ "$has_ask" -eq 1 ]; then
+                                stacked_verdict='"ASK"'
+                            else
+                                stacked_verdict='"MIXED"'
+                            fi
+                            stacked_pct="$min_pct"
+                        fi
+                        ;;
+                    *)
+                        subcall_failed=true
+                        route="halt-other"; reason="subcall_failed=detect-stacked-pr=${stk_rc}"; conf="none"
+                        ;;
+                esac
 
-                # Optional history retrieval.
-                if $history_search && [ -x "$SCRIPT_DIR/historical-resolution-search.sh" ]; then
-                    local hist_out
-                    hist_out="$("$SCRIPT_DIR/historical-resolution-search.sh" --file "$f" --top 3 --json 2>/dev/null || true)"
-                    if [ -n "$hist_out" ]; then
-                        history_top_score="$(printf '%s' "$hist_out" | grep -oE '"score":[0-9]+' | head -n1 | sed -E 's/.*:([0-9]+)/\1/' || true)"
-                        history_top_score="${history_top_score:-null}"
-                    fi
+                # Optional history retrieval. Exit 0 = signal; exit 2 = no
+                # usable history; any other non-zero = real failure -> halt.
+                if ! $subcall_failed && $history_search && [ -x "$SCRIPT_DIR/historical-resolution-search.sh" ]; then
+                    local hist_out hist_rc=0
+                    hist_out="$("$SCRIPT_DIR/historical-resolution-search.sh" --file "$f" --top 3 --json 2>/dev/null)" || hist_rc=$?
+                    case "$hist_rc" in
+                        0)
+                            if [ -n "$hist_out" ]; then
+                                history_top_score="$(printf '%s' "$hist_out" | grep -oE '"score":[0-9]+' | head -n1 | sed -E 's/.*:([0-9]+)/\1/' || true)"
+                                history_top_score="${history_top_score:-null}"
+                            fi
+                            ;;
+                        2) ;;  # no usable history; routing continues without it
+                        *)
+                            subcall_failed=true
+                            route="halt-other"; reason="subcall_failed=historical-resolution-search=${hist_rc}"; conf="none"
+                            ;;
+                    esac
                 fi
 
                 # Routing table (first match wins; cites H-NN heuristics).
-                if [ "$num" -gt 0 ] && [ "$all_ah" -eq 1 ]; then
-                    route="stacked-auto"; reason="stacked_pct=${min_pct}"; conf="high"           # H-06
-                elif [ "$num" -gt 0 ] && [ "$has_ask" -eq 1 ]; then
-                    route="llm-imbalanced"; reason="stacked_ask_pct=${min_pct}"; conf="medium"   # H-06
-                elif [ "$total_lines" -gt "$large_threshold" ]; then
-                    route="halt-decomposition"; reason="total=${total_lines}"; conf="none"        # H-11
-                elif [ "$min" -eq 0 ] && [ "$max" -gt 0 ]; then
-                    route="llm-imbalanced"; reason="empty_side=${empty_side}"; conf="medium"     # modify-delete
-                elif [ "$min" -gt 0 ] && [ "$max" -ge "$((imbalance_threshold * min))" ]; then
-                    route="llm-imbalanced"; reason="ratio=${imbalance_ratio}"; conf="high"       # H-02
-                elif [ "$history_top_score" != null ] && [ "$history_top_score" -ge "$history_threshold" ]; then
-                    route="llm-with-history"; reason="hist_score=${history_top_score}"; conf="medium" # H-05
-                elif [ "$has_base" -eq 1 ]; then
-                    route="sbse-recombine"; reason="balanced_lines=${left}/${right}"; conf="medium"   # H-02
-                elif [ "$total_lines" -eq 0 ]; then
-                    route="halt-other"; reason="no_conflict_blocks"; conf="none"
-                else
-                    route="llm-imbalanced"; reason="no_diff3=true"; conf="low"                    # H-06
+                # Skipped entirely if a subcall failure already set route.
+                if ! $subcall_failed; then
+                    if [ "$num" -gt 0 ] && [ "$all_ah" -eq 1 ]; then
+                        route="stacked-auto"; reason="stacked_pct=${min_pct}"; conf="high"           # H-06
+                    elif [ "$num" -gt 0 ] && [ "$has_ask" -eq 1 ]; then
+                        route="llm-imbalanced"; reason="stacked_ask_pct=${min_pct}"; conf="medium"   # H-06
+                    elif [ "$total_lines" -gt "$large_threshold" ]; then
+                        route="halt-decomposition"; reason="total=${total_lines}"; conf="none"        # H-11
+                    elif [ "$min" -eq 0 ] && [ "$max" -gt 0 ]; then
+                        route="llm-imbalanced"; reason="empty_side=${empty_side}"; conf="medium"     # modify-delete
+                    elif [ "$min" -gt 0 ] && [ "$max" -ge "$((imbalance_threshold * min))" ]; then
+                        route="llm-imbalanced"; reason="ratio=${imbalance_ratio}"; conf="high"       # H-02
+                    elif [ "$history_top_score" != null ] && [ "$history_top_score" -ge "$history_threshold" ]; then
+                        route="llm-with-history"; reason="hist_score=${history_top_score}"; conf="medium" # H-05
+                    elif [ "$has_base" -eq 1 ]; then
+                        route="sbse-recombine"; reason="balanced_lines=${left}/${right}"; conf="medium"   # H-02
+                    elif [ "$n_blocks" -eq 0 ]; then
+                        route="halt-other"; reason="no_conflict_blocks"; conf="none"
+                    elif [ "$total_lines" -eq 0 ]; then
+                        route="halt-other"; reason="empty_conflict_blocks"; conf="none"
+                    else
+                        route="llm-imbalanced"; reason="no_diff3=true"; conf="low"                    # H-06
+                    fi
                 fi
             fi
         fi

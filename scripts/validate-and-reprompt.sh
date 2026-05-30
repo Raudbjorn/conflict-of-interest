@@ -19,12 +19,20 @@ main() {
     command -v git >/dev/null || { echo "ERROR: git not found in PATH" >&2; exit 12; }
     git rev-parse --git-dir >/dev/null 2>&1 || { echo "ERROR: not in a git repository" >&2; exit 11; }
 
+    # Preserve the caller's argv so the re-run command in the reprompt artifact
+    # is byte-identical to what the operator actually ran (preserves
+    # --include-path, --state-file, --reprompt-out, --max-iterations, etc.).
+    local original_argv=("$@")
+
     local typecheck="" test_cmd="" max_iters=1
     local include_paths=()
-    local git_dir state_file reprompt_out
-    git_dir="$(git rev-parse --git-dir)"
-    state_file="$git_dir/conflict-resolver/reprompt-state.json"
-    reprompt_out="$git_dir/conflict-resolver/reprompt.md"
+    local git_dir state_file reprompt_out artifact_root
+    # Use --absolute-git-dir so the artifact-root prefix check below compares
+    # canonical absolute paths.
+    git_dir="$(git rev-parse --absolute-git-dir)"
+    artifact_root="$git_dir/conflict-resolver"
+    state_file="$artifact_root/reprompt-state.json"
+    reprompt_out="$artifact_root/reprompt.md"
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -40,6 +48,23 @@ main() {
         esac
     done
     case "$max_iters" in ''|*[!0-9]*) echo "ERROR: --max-iterations must be an integer" >&2; exit 10 ;; esac
+
+    # Enforce the contract that artifact paths stay under .git/conflict-resolver/.
+    # Reject anything that canonicalises outside that prefix — same posture as
+    # the rest of the skill (no writes outside the worktree / .git).
+    assert_under_artifact_root() {
+        local label="$1" path="$2" canon
+        if command -v realpath >/dev/null 2>&1; then
+            canon="$(realpath -m -- "$path" 2>/dev/null || true)"
+        fi
+        [ -n "${canon:-}" ] || canon="$path"
+        case "$canon" in
+            "$artifact_root"|"$artifact_root"/*) ;;
+            *) echo "ERROR: $label must live under $artifact_root (got: $canon)" >&2; exit 10 ;;
+        esac
+    }
+    assert_under_artifact_root --state-file "$state_file"
+    assert_under_artifact_root --reprompt-out "$reprompt_out"
 
     # Read iteration count from state file (1-line JSON-ish).
     local iter=0
@@ -82,9 +107,12 @@ main() {
 
     # Identify candidate files from validate output. Patterns: "path:line:col" or
     # "path:line" or unmerged paths from `git diff --name-only --diff-filter=U`.
+    # Broadened from the original `[A-Za-z0-9_./-]+` to anything-but-space-or-colon
+    # so paths containing `@`, `+`, spaces, etc. survive (e.g. node_modules/@foo/
+    # bar, or scoped npm packages).
     local candidate_files cand_list=""
     candidate_files="$(printf '%s\n' "$output" \
-        | grep -oE '[A-Za-z0-9_./-]+:[0-9]+(:[0-9]+)?' \
+        | grep -oE '[^[:space:]:][^:]*:[0-9]+(:[0-9]+)?' \
         | awk -F: '{print $1}' \
         | awk '!seen[$0]++' \
         | grep -v '^.*-resolution\.sh$' \
@@ -119,13 +147,19 @@ main() {
     local tail_output
     tail_output="$(printf '%s\n' "$output" | tail -n 60)"
 
+    # Render the exact validate-resolution.sh args we actually passed (incl.
+    # --include-path) and the full original argv to this script for the rerun.
+    local validate_cmd rerun_cmd a
+    validate_cmd="validate-resolution.sh"
+    for a in ${v_args[@]+"${v_args[@]}"}; do validate_cmd+=" $(printf '%q' "$a")"; done
+    rerun_cmd="$SCRIPT_DIR/validate-and-reprompt.sh"
+    for a in ${original_argv[@]+"${original_argv[@]}"}; do rerun_cmd+=" $(printf '%q' "$a")"; done
+
     {
         printf '# Reprompt — validation failed (iteration %d/%d)\n\n' "$iter" "$max_iters"
         printf '## Failure\n'
         printf -- '- Exit code: %d (%s)\n' "$rc" "$reason"
-        printf -- '- Command: `validate-resolution.sh%s%s`\n' \
-            "$( [ -n "$typecheck" ] && printf ' --typecheck %q' "$typecheck" )" \
-            "$( [ -n "$test_cmd" ] && printf ' --test %q' "$test_cmd" )"
+        printf -- '- Command: `%s`\n' "$validate_cmd"
         printf '\n### Last 60 lines of validation output\n\n'
         printf '```\n%s\n```\n\n' "$tail_output"
         printf '## Files involved\n'
@@ -140,12 +174,7 @@ main() {
         printf 'Re-resolve the file(s) above so the failing check passes. Preserve the\n'
         printf 'recorded resolution intent from the per-file Decision Record (Step 3i).\n'
         printf 'Do not introduce changes unrelated to the failure. After re-resolving, run:\n\n'
-        printf '```\n'
-        printf '%s/validate-and-reprompt.sh' "$SCRIPT_DIR"
-        [ -n "$typecheck" ] && printf ' --typecheck %q' "$typecheck"
-        [ -n "$test_cmd" ] && printf ' --test %q' "$test_cmd"
-        printf ' --max-iterations %d\n' "$max_iters"
-        printf '```\n\n'
+        printf '```\n%s\n```\n\n' "$rerun_cmd"
         printf 'If the same failure recurs, HALT and surface the conflict and this artifact\n'
         printf 'to the user. Abstention beats a wrong merge.\n'
     } > "$reprompt_out"

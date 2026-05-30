@@ -352,12 +352,35 @@ test_balanced_large_halt
 test_empty_side
 test_no_diff3
 test_no_unmerged
+# --- regression: distinguish no-blocks from empty-blocks in the reason ------
+test_empty_conflict_blocks_reason() {
+    local repo rc out
+    repo="$(new_repo)"
+    # No-diff3 markers with empty left/right sections — file has blocks
+    # (n_blocks > 0) but total_lines == 0 and no base. Pre-fix this routed as
+    # "no_conflict_blocks"; post-fix it must say "empty_conflict_blocks". Use
+    # an impossibly high --auto-stacked so detect-stacked-pr's empty-vs-empty
+    # 100% similarity does not steal the routing.
+    cat > "$repo/empty.txt" <<'EOF'
+<<<<<<< HEAD
+=======
+>>>>>>> theirs
+EOF
+    rc=0
+    out="$(cd "$repo" && bash "$SCRIPT" --file empty.txt --auto-stacked 200 --ask-stacked 200 --json)" || rc=$?
+    assert_exit "empty-blocks exits 0" 0 "$rc"
+    assert_contains "reason is empty_conflict_blocks" '"reason":"empty_conflict_blocks"' "$out"
+    assert_not_contains "reason is NOT no_conflict_blocks" '"reason":"no_conflict_blocks"' "$out"
+    rm -rf "$repo"
+}
+
 test_category_wins
 test_worktree_missing
 test_non_repo_guard
 test_arg_error
 test_tsv_format
 test_history_search_gated
+test_empty_conflict_blocks_reason
 
 echo ""
 echo "Results: $passes passed, $failures failed"

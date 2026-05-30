@@ -16,15 +16,17 @@
 jaccard_similarity_pct() {
     local left="$1" right="$2"
     local norm_left norm_right left_count right_count both_count union_count
-    norm_left="$(printf '%s\n' "$left" | sed -E 's/[[:space:]]+//g' | awk 'NF' | sort -u)"
-    norm_right="$(printf '%s\n' "$right" | sed -E 's/[[:space:]]+//g' | awk 'NF' | sort -u)"
+    # Force C locale so `sort` and `comm` agree on byte-order and don't warn
+    # about "file 1 is not in sorted order" under non-C locales.
+    norm_left="$(printf '%s\n' "$left" | sed -E 's/[[:space:]]+//g' | awk 'NF' | LC_ALL=C sort -u)"
+    norm_right="$(printf '%s\n' "$right" | sed -E 's/[[:space:]]+//g' | awk 'NF' | LC_ALL=C sort -u)"
     left_count="$(printf '%s\n' "$norm_left" | awk 'NF {n++} END {print n + 0}')"
     right_count="$(printf '%s\n' "$norm_right" | awk 'NF {n++} END {print n + 0}')"
     if [ "$left_count" -eq 0 ] && [ "$right_count" -eq 0 ]; then
         echo 100
         return
     fi
-    both_count="$(comm -12 <(printf '%s\n' "$norm_left") <(printf '%s\n' "$norm_right") | awk 'NF {n++} END {print n + 0}')"
+    both_count="$(LC_ALL=C comm -12 <(printf '%s\n' "$norm_left") <(printf '%s\n' "$norm_right") | awk 'NF {n++} END {print n + 0}')"
     union_count=$((left_count + right_count - both_count))
     if [ "$union_count" -eq 0 ]; then
         echo 100

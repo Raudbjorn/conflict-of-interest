@@ -13,10 +13,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/jaccard.sh"
 
 json_escape() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    printf '%s' "$s"
+    # With --include-content the input can be a multiline candidate body, so we
+    # must escape the five JSON-named control chars and any remaining 0x00-0x1f
+    # bytes as \u00xx; otherwise the surrounding JSON object is malformed and
+    # the line-oriented sort/read pipeline downstream is broken by raw newlines.
+    local s="$1" out="" i ch code
+    for ((i = 0; i < ${#s}; i++)); do
+        ch="${s:i:1}"
+        case "$ch" in
+            '\') out+='\\' ;;
+            '"') out+='\"' ;;
+            $'\b') out+='\b' ;;
+            $'\f') out+='\f' ;;
+            $'\n') out+='\n' ;;
+            $'\r') out+='\r' ;;
+            $'\t') out+='\t' ;;
+            *)
+                printf -v code '%d' "'$ch" 2>/dev/null || code=0
+                if [ "$code" -ge 0 ] && [ "$code" -lt 32 ]; then
+                    printf -v ch '\\u%04x' "$code"
+                fi
+                out+="$ch"
+                ;;
+        esac
+    done
+    printf '%s' "$out"
 }
 
 # Splits a string into lines preserving blanks, dropping only the trailing
@@ -83,10 +104,13 @@ cand_intersection() {
 cand_base_plus_additive() {
     [ -n "$BASE" ] || return 1
     printf '%s' "$BASE"
+    # Order-preserving deduplication: sort -u would alphabetise lines and
+    # scramble code structure, almost guaranteeing a non-compiling candidate.
+    # `awk '!seen[$0]++'` keeps the first occurrence in left-then-right order.
     {
         split_lines "$LEFT"
         split_lines "$RIGHT"
-    } | sort -u | while IFS= read -r l; do
+    } | awk '!seen[$0]++' | while IFS= read -r l; do
         [ -n "$l" ] || continue
         grep -Fxq -- "$l" <<< "$BASE" || printf '%s\n' "$l"
     done

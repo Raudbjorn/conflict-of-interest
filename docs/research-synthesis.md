@@ -21,6 +21,7 @@
 11. [Risk Register](#11-risk-register)
 12. [Confidence Assessment](#12-confidence-assessment)
 13. [Footnotes and Citations](#13-footnotes-and-citations)
+14. [Python v2 plans (deferred)](#14-python-v2-plans-deferred)
 
 ---
 

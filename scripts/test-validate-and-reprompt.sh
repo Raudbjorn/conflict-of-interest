@@ -186,19 +186,40 @@ test_state_file_out_of_tree_rejected() {
     rm -rf "$repo"
 }
 
-# --- regression: artifact preserves --include-path in printed commands ------
-test_artifact_preserves_include_path() {
-    local repo rc artifact
+# --- regression: --reprompt-out outside .git/conflict-resolver/ is rejected ---
+test_reprompt_out_of_tree_rejected() {
+    local repo rc err out_path
     repo="$(new_repo)"
-    # Force a typecheck failure so the artifact is written; pass an
-    # --include-path that the artifact must echo back faithfully.
+    out_path="$(mktemp -u "${TMPDIR:-/tmp}/vr-out-of-tree.XXXXXX.md")"
     rc=0
-    (cd "$repo" && bash "$SCRIPT" --typecheck 'false' --include-path 'src/billing/**') >/dev/null 2>&1 || rc=$?
+    err="$(cd "$repo" && bash "$SCRIPT" --reprompt-out "$out_path" 2>&1)" || rc=$?
+    assert_exit "out-of-tree --reprompt-out rejected with exit 10" 10 "$rc"
+    assert_contains "rejection mentions artifact-root prefix" "must live under" "$err"
+    assert_file_absent "no rogue reprompt artifact created" "$out_path"
+    rm -rf "$repo"
+}
+
+# --- regression: artifact preserves forwarded flags in printed commands ------
+test_artifact_preserves_forwarded_flags() {
+    local repo rc artifact state_file reprompt_out content
+    repo="$(new_repo)"
+    state_file="$repo/.git/conflict-resolver/custom-state.json"
+    reprompt_out="$repo/.git/conflict-resolver/custom/reprompt.md"
+    rc=0
+    (cd "$repo" && bash "$SCRIPT" \
+        --typecheck 'false' \
+        --include-path 'src/billing/**' \
+        --state-file "$state_file" \
+        --reprompt-out "$reprompt_out") >/dev/null 2>&1 || rc=$?
     assert_exit "typecheck failure exits 5 (retry requested)" 5 "$rc"
-    artifact="$repo/.git/conflict-resolver/reprompt.md"
+    artifact="$reprompt_out"
     assert_file_exists "artifact written" "$artifact"
-    assert_contains "validate command preserves --include-path" "--include-path src/billing" "$(cat "$artifact")"
-    assert_contains "rerun command preserves --include-path" "--include-path src/billing" "$(cat "$artifact")"
+    assert_file_exists "custom state file written" "$state_file"
+    content="$(cat "$artifact")"
+    assert_contains "validate command preserves --include-path" "--include-path src/billing" "$content"
+    assert_contains "rerun command preserves --include-path" "--include-path src/billing" "$content"
+    assert_contains "rerun command preserves --state-file" "--state-file $state_file" "$content"
+    assert_contains "rerun command preserves --reprompt-out" "--reprompt-out $reprompt_out" "$content"
     rm -rf "$repo"
 }
 
@@ -213,7 +234,8 @@ test_max_iter_0
 test_arg_errors
 test_non_repo_guard
 test_state_file_out_of_tree_rejected
-test_artifact_preserves_include_path
+test_reprompt_out_of_tree_rejected
+test_artifact_preserves_forwarded_flags
 
 echo ""
 echo "Results: $passes passed, $failures failed"

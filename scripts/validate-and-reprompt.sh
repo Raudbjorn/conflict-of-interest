@@ -78,7 +78,7 @@ main() {
     [ -n "$typecheck" ] && v_args+=(--typecheck "$typecheck")
     [ -n "$test_cmd" ] && v_args+=(--test "$test_cmd")
     local p
-    for p in ${include_paths[@]+"${include_paths[@]}"}; do v_args+=(--include-path "$p"); done
+    for p in "${include_paths[@]}"; do v_args+=(--include-path "$p"); done
 
     # Run validate-resolution.sh capturing combined output. Echo to terminal so
     # the user still sees the failure live.
@@ -180,6 +180,7 @@ main() {
     } > "$reprompt_out"
 
     # Write/update state file.
+    mkdir -p "$(dirname "$state_file")"
     {
         printf '{"iteration":%d,"max_iterations":%d,"last_exit_code":%d,"last_reason":"%s"}\n' \
             "$iter" "$max_iters" "$rc" "$reason"

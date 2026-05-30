@@ -64,6 +64,8 @@ main() {
 
     local file="" k=4 max_hits=48 max_bytes=12288 max_seeds=12
     local extra_seeds=() format=md
+    local git_root
+    git_root="$(git rev-parse --show-toplevel)"
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -80,6 +82,16 @@ main() {
         esac
     done
     [ -n "$file" ] || { echo "ERROR: --file is required" >&2; exit 10; }
+    local abs_file
+    case "$file" in
+        /*) abs_file="$(realpath -m "$file")" ;;
+        *) abs_file="$(realpath -m "$PWD/$file")" ;;
+    esac
+    case "$abs_file" in
+        "$git_root"/*) file="${abs_file#"$git_root"/}" ;;
+        *) echo "ERROR: --file must be inside the git worktree: $file" >&2; exit 10 ;;
+    esac
+    cd "$git_root"
     [ -r "$file" ] || { echo "ERROR: cannot read $file" >&2; exit 10; }
     # Canonicalize --file to a repo-relative path so the self-hit guard further
     # down matches `git grep`'s output regardless of how the caller spelled it

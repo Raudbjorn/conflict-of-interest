@@ -56,11 +56,27 @@ top_module() {
 }
 
 json_escape() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    printf '%s' "$s"
+    local s="$1" out="" i ch code
+    for ((i = 0; i < ${#s}; i++)); do
+        ch="${s:i:1}"
+        case "$ch" in
+            '\') out+='\\' ;;
+            '"') out+='\"' ;;
+            $'\b') out+='\b' ;;
+            $'\f') out+='\f' ;;
+            $'\n') out+='\n' ;;
+            $'\r') out+='\r' ;;
+            $'\t') out+='\t' ;;
+            *)
+                printf -v code '%d' "'$ch" 2>/dev/null || code=0
+                if [ "$code" -ge 0 ] && [ "$code" -lt 32 ]; then
+                    printf -v ch '\\u%04x' "$code"
+                fi
+                out+="$ch"
+                ;;
+        esac
+    done
+    printf '%s' "$out"
 }
 
 layer_count() {
